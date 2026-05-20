@@ -57,3 +57,27 @@ output "ecr_calling_uri" {
 output "ecr_receiving_uri" {
   value = module.ecr.receiving_repo_uri
 }
+
+output "ecr_ledger_uri" {
+  value = module.ecr.ledger_repo_uri
+}
+
+output "cognito_ledger_client_id" {
+  value = module.cognito.ledger_client_id
+}
+
+output "cognito_receiving_outbound_client_id" {
+  value = module.cognito.receiving_outbound_client_id
+}
+
+output "secrets_ledger_arn" {
+  value = module.secrets.ledger_secret_arn
+}
+
+output "secrets_receiving_outbound_arn" {
+  value = module.secrets.receiving_outbound_secret_arn
+}
+
+output "avp_ledger_policy_store_id" {
+  value = module.avp.ledger_policy_store_id
+}
