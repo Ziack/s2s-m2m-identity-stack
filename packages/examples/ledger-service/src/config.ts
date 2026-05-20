@@ -10,6 +10,12 @@ export interface LedgerServiceConfig {
   redisEndpoint: string;
   awsRegion: string;
   logLevel: string;
+  /** Broker JWKS endpoint used to verify inbound broker-issued tokens. */
+  brokerJwksUri: string;
+  /** Broker `iss` value expected on inbound tokens. */
+  brokerIssuer: string;
+  /** Audience expected on inbound broker-issued tokens (i.e. 'ledger'). */
+  brokerAudience: string;
 }
 
 function requireEnv(name: string): string {
@@ -31,5 +37,8 @@ export function loadConfig(): LedgerServiceConfig {
     redisEndpoint: requireEnv('REDIS_ENDPOINT'),
     awsRegion: process.env.AWS_REGION ?? 'us-east-1',
     logLevel: process.env.LOG_LEVEL ?? 'info',
+    brokerJwksUri: process.env.BROKER_JWKS_URI ?? '',
+    brokerIssuer: process.env.BROKER_ISSUER ?? '',
+    brokerAudience: process.env.BROKER_AUDIENCE ?? 'ledger',
   };
 }
