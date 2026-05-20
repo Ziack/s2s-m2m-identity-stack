@@ -47,6 +47,33 @@ export interface ValidatedToken {
   raw: Record<string, unknown>;
 }
 
+export interface UserContext {
+  /** Subject from the user token (e.g., "user-alice") */
+  sub: string;
+  /** Roles claim, normalised to an array */
+  roles: string[];
+  /** Groups claim, normalised to an array (empty if absent) */
+  groups: string[];
+  /** Other custom claims preserved as-is */
+  claims: Record<string, unknown>;
+  /** The original issuer URL (USER_ISSUER_URL or equivalent) */
+  issuer: string;
+}
+
+/** Actor chain claim per RFC 8693 section 4.1. Recursive: each `act` may itself contain another `act`. */
+export interface ActorChain {
+  /** Service principal of this hop */
+  sub: string;
+  /** The hop above this one */
+  act?: ActorChain;
+}
+
+/** The result of validating an exchanged token that carries user + actor context. */
+export interface ValidatedExchangedToken extends ValidatedToken {
+  user: UserContext;
+  actor_chain: ActorChain;
+}
+
 export interface AuthorizationResult {
   decision: 'ALLOW' | 'DENY';
   reasons: string[];
