@@ -11,12 +11,24 @@ namespace M2M {
     domain: String,
   };
 
+  type UserAttrs = {
+    sub: String,
+    roles: Set<String>,
+    groups: Set<String>,
+  };
+
+  // AuthContext now optionally carries user + actor_chain populated by the
+  // sync receiving/ledger middleware (Phase 4). Legacy paths (M2M-only flows,
+  // envelope verification) that don't carry these fields still type-check
+  // because both are optional and policies guard with `has`.
   type AuthContext = {
     dpop_confirmed: Bool,
     scopes: Set<String>,
     source_domain: String,
     request_hour?: Long,
     correlation_id: String,
+    user?: UserAttrs,
+    actor_chain?: Set<String>,
   };
 
   action POST_loan_application appliesTo {

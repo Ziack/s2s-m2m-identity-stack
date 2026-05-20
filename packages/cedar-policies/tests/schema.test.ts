@@ -27,4 +27,14 @@ describe('schema', () => {
     expect(schema).toMatch(/action\s+POST_notification/);
     expect(schema).toMatch(/action\s+POST_account/);
   });
+
+  it('declares optional user + actor_chain context fields (Phase 5)', () => {
+    const schema = loadSchema();
+    expect(schema).toMatch(/type\s+UserAttrs\s*=/);
+    expect(schema).toMatch(/sub:\s*String/);
+    expect(schema).toMatch(/roles:\s*Set<String>/);
+    expect(schema).toMatch(/groups:\s*Set<String>/);
+    expect(schema).toMatch(/user\?:\s*UserAttrs/);
+    expect(schema).toMatch(/actor_chain\?:\s*Set<String>/);
+  });
 });
