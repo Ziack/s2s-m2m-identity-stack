@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   postLedgerEntry,
   LedgerOutboundError,
-  __setAcquireFn,
+  __setExchangeFn,
   __setFetchImpl,
   __resetLedgerClient,
 } from '../src/lib/ledgerClient.js';
@@ -17,11 +17,10 @@ vi.mock('@s2s/auth-library', () => ({
     signedNonces.push(opts.nonce);
     return { proof, jti: `jti-${signedProofs.length}` };
   }),
-  createAcquireToken: () => () => Promise.resolve({ accessToken: 'tok-123', expiresAt: 0, scopes: [], tokenSource: 'cognito' }),
-  TokenCache: class { constructor(_: unknown) {} },
-  getRedisClient: () => ({}),
+  // The real ledgerClient calls `createExchangeToken` only if no exchangeFn is
+  // preset via `__setExchangeFn`. Tests inject a double directly.
+  createExchangeToken: () => async () => ({ accessToken: 'tok-default', expiresAt: 0, tokenType: 'DPoP', issuedTokenType: 'urn:ietf:params:oauth:token-type:access_token', scopes: ['ledger/write'] }),
   getClientSecret: vi.fn(async () => JSON.stringify({ client_secret: 'shh' })),
-  buildBreaker: () => ({ execute: <T>(fn: () => Promise<T>) => fn() }),
 }));
 
 const cfg = {
@@ -43,6 +42,10 @@ const cfg = {
   ledgerOutboundSecretArn: 'arn:aws:secretsmanager:us-east-1:111111111111:secret:m2m/recv/client-secret',
   ledgerOutboundEnabled: true,
   cognitoDomain: 'example',
+  brokerJwksUri: 'http://broker/jwks',
+  brokerIssuer: 'http://broker',
+  brokerAudience: 'receiving',
+  brokerTokenEndpoint: 'http://broker/oauth2/token',
 };
 
 function jsonResponse(status: number, body: unknown, headers: Record<string, string> = {}): Response {
@@ -59,32 +62,53 @@ describe('postLedgerEntry', () => {
     __resetLedgerClient();
   });
 
-  it('acquires token, signs DPoP, and POSTs with correct headers', async () => {
-    const acquire = vi.fn(async () => ({ accessToken: 'tok-xyz', expiresAt: 0, scopes: ['ledger/write'], tokenSource: 'cognito' as const }));
-    __setAcquireFn(acquire);
+  it('exchanges subjectToken at broker, signs DPoP, and POSTs with exchanged-token headers', async () => {
+    const exchange = vi.fn(async (input: { subjectToken: string }) => ({
+      accessToken: `exchanged-for-${input.subjectToken}`,
+      expiresAt: 0,
+      tokenType: 'DPoP' as const,
+      issuedTokenType: 'urn:ietf:params:oauth:token-type:access_token',
+      scopes: ['ledger/write'],
+    }));
+    __setExchangeFn(exchange);
     const fetchMock = vi.fn(async () => jsonResponse(201, { entryId: 'E-1', status: 'committed' }));
     __setFetchImpl(fetchMock as unknown as typeof fetch);
 
     const result = await postLedgerEntry(cfg, {
       correlationId: 'corr-1',
       payload: { loanId: 'L-aaa', amount: 100 },
+      subjectToken: 'inbound-token-abc',
     });
 
     expect(result).toEqual({ entryId: 'E-1', status: 'committed' });
-    expect(acquire).toHaveBeenCalledWith('receiving-service-outbound', ['ledger/write']);
+    expect(exchange).toHaveBeenCalledTimes(1);
+    expect(exchange).toHaveBeenCalledWith({ subjectToken: 'inbound-token-abc' });
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = fetchMock.mock.calls[0]!;
     expect(url).toBe('http://ledger.local/api/ledger/entries');
     const headers = (init as RequestInit).headers as Record<string, string>;
-    expect(headers.authorization).toBe('DPoP tok-xyz');
+    expect(headers.authorization).toBe('DPoP exchanged-for-inbound-token-abc');
     expect(headers.dpop).toBe('proof-1');
     expect(headers['x-correlation-id']).toBe('corr-1');
     expect(headers['content-type']).toBe('application/json');
     expect((init as RequestInit).body).toBe(JSON.stringify({ loanId: 'L-aaa', amount: 100 }));
   });
 
+  it('throws if subjectToken is missing — cannot propagate user identity', async () => {
+    __setExchangeFn(async () => ({
+      accessToken: 'whatever', expiresAt: 0, tokenType: 'DPoP' as const,
+      issuedTokenType: 'urn:ietf:params:oauth:token-type:access_token', scopes: [],
+    }));
+    await expect(
+      postLedgerEntry(cfg, { correlationId: 'corr-x', payload: {} }),
+    ).rejects.toBeInstanceOf(LedgerOutboundError);
+  });
+
   it('retries once on 401 with DPoP-Nonce header echoed back', async () => {
-    __setAcquireFn(async () => ({ accessToken: 'tok-xyz', expiresAt: 0, scopes: [], tokenSource: 'cognito' as const }));
+    __setExchangeFn(async () => ({
+      accessToken: 'tok-xyz', expiresAt: 0, tokenType: 'DPoP' as const,
+      issuedTokenType: 'urn:ietf:params:oauth:token-type:access_token', scopes: [],
+    }));
     let callCount = 0;
     const fetchMock = vi.fn(async () => {
       callCount += 1;
@@ -98,27 +122,37 @@ describe('postLedgerEntry', () => {
     });
     __setFetchImpl(fetchMock as unknown as typeof fetch);
 
-    const result = await postLedgerEntry(cfg, { correlationId: 'corr-2', payload: { loanId: 'L-b' } });
+    const result = await postLedgerEntry(cfg, {
+      correlationId: 'corr-2',
+      payload: { loanId: 'L-b' },
+      subjectToken: 'inbound-2',
+    });
     expect(result.entryId).toBe('E-2');
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(signedNonces).toEqual([undefined, 'NONCE-7']);
   });
 
   it('throws LedgerOutboundError on 500 after retry exhausted', async () => {
-    __setAcquireFn(async () => ({ accessToken: 'tok', expiresAt: 0, scopes: [], tokenSource: 'cognito' as const }));
+    __setExchangeFn(async () => ({
+      accessToken: 'tok', expiresAt: 0, tokenType: 'DPoP' as const,
+      issuedTokenType: 'urn:ietf:params:oauth:token-type:access_token', scopes: [],
+    }));
     const fetchMock = vi.fn(async () => new Response('boom', { status: 500 }));
     __setFetchImpl(fetchMock as unknown as typeof fetch);
     await expect(
-      postLedgerEntry(cfg, { correlationId: 'corr-3', payload: {} }),
+      postLedgerEntry(cfg, { correlationId: 'corr-3', payload: {}, subjectToken: 'tok-in' }),
     ).rejects.toBeInstanceOf(LedgerOutboundError);
   });
 
   it('does not retry on non-401 4xx errors', async () => {
-    __setAcquireFn(async () => ({ accessToken: 'tok', expiresAt: 0, scopes: [], tokenSource: 'cognito' as const }));
+    __setExchangeFn(async () => ({
+      accessToken: 'tok', expiresAt: 0, tokenType: 'DPoP' as const,
+      issuedTokenType: 'urn:ietf:params:oauth:token-type:access_token', scopes: [],
+    }));
     const fetchMock = vi.fn(async () => new Response('bad request', { status: 400 }));
     __setFetchImpl(fetchMock as unknown as typeof fetch);
     await expect(
-      postLedgerEntry(cfg, { correlationId: 'corr-4', payload: {} }),
+      postLedgerEntry(cfg, { correlationId: 'corr-4', payload: {}, subjectToken: 'tok-in' }),
     ).rejects.toMatchObject({ status: 400 });
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });

@@ -1,20 +1,26 @@
 /**
  * Outbound client used by receiving-service to call the downstream ledger
  * service. Each hop in `calling → receiving → ledger` is an independent OAuth
- * client (DPoP is sender-constrained, so tokens cannot be forwarded).
+ * client; tokens are not forwarded (DPoP is sender-constrained), but the
+ * **identity** propagates through RFC 8693 token-exchange at the broker.
  *
- * Module-scoped lazy initialization caches a single `createAcquireToken`
- * instance to amortise the Secrets Manager fetch + breaker construction.
+ * Phase 4: the previous client_credentials `acquireToken` path is replaced
+ * with `exchangeToken({ subjectToken: <inbound token> })` so the user's `sub`
+ * and the accumulated `act` chain reach the ledger. The broker mints a token
+ * with `sub = <user>, act = { sub: 'receiving-service-outbound', act: { sub:
+ * 'calling-service' } }`, which the ledger validates against the broker JWKS
+ * and consumes via its broker-aware middleware.
+ *
+ * Module-scoped lazy initialization caches a single `ExchangeTokenFn`
+ * instance to amortise the Secrets Manager fetch.
  */
 import {
   signDPoP,
-  createAcquireToken,
-  TokenCache,
-  getRedisClient,
+  createExchangeToken,
   getClientSecret,
-  buildBreaker,
+  type ExchangeTokenFn,
+  type ExchangeTokenResult,
 } from '@s2s/auth-library';
-import type { TokenResult } from '@s2s/auth-library';
 import type { ReceivingServiceConfig } from '../config.js';
 
 export class LedgerOutboundError extends Error {
@@ -28,15 +34,13 @@ export class LedgerOutboundError extends Error {
   }
 }
 
-type AcquireFn = (clientId: string, scopes: string[]) => Promise<TokenResult>;
-
-let acquireFn: AcquireFn | null = null;
+let exchangeFn: ExchangeTokenFn | null = null;
 let configRef: ReceivingServiceConfig | null = null;
 let fetchImpl: typeof fetch = fetch;
 
-/** Test seam — replace the cached acquireToken function. */
-export function __setAcquireFn(fn: AcquireFn | null): void {
-  acquireFn = fn;
+/** Test seam — replace the cached exchangeToken function. */
+export function __setExchangeFn(fn: ExchangeTokenFn | null): void {
+  exchangeFn = fn;
 }
 
 /** Test seam — replace the fetch implementation. */
@@ -46,40 +50,42 @@ export function __setFetchImpl(impl: typeof fetch): void {
 
 /** Test seam — reset module state between tests. */
 export function __resetLedgerClient(): void {
-  acquireFn = null;
+  exchangeFn = null;
   configRef = null;
   fetchImpl = fetch;
 }
 
-async function ensureAcquire(config: ReceivingServiceConfig): Promise<AcquireFn> {
-  if (acquireFn) return acquireFn;
+async function ensureExchange(config: ReceivingServiceConfig): Promise<ExchangeTokenFn> {
+  if (exchangeFn) return exchangeFn;
   configRef = config;
-  const secretJson = await getClientSecret(config.ledgerOutboundSecretArn, config.awsRegion);
-  let clientSecret: string;
-  try {
-    const parsed = JSON.parse(secretJson) as { client_secret?: string };
-    clientSecret = parsed.client_secret ?? secretJson;
-  } catch {
-    clientSecret = secretJson;
-  }
-  const redis = getRedisClient(config.redisEndpoint);
-  const cache = new TokenCache({ redis });
-  const breaker = buildBreaker('cognito-ledger-outbound', {
-    failureThreshold: 5,
-    halfOpenAfterMs: 30_000,
-    samplingDurationMs: 60_000,
+  exchangeFn = createExchangeToken({
+    brokerUrl: config.brokerTokenEndpoint,
+    actorClientId: config.ledgerOutboundClientId,
+    actorClientSecret: async () => {
+      const raw = await getClientSecret(config.ledgerOutboundSecretArn, config.awsRegion);
+      try {
+        const parsed = JSON.parse(raw) as { client_secret?: string };
+        return parsed.client_secret ?? raw;
+      } catch {
+        return raw;
+      }
+    },
+    audience: 'ledger',
+    scope: ['ledger/write'],
   });
-  const cognitoDomain = config.cognitoDomain.startsWith('http')
-    ? config.cognitoDomain
-    : `https://${config.cognitoDomain}.auth.${config.awsRegion}.amazoncognito.com`;
-  const fn = createAcquireToken({ cognitoDomain, clientSecret, cache, breaker });
-  acquireFn = (clientId, scopes) => fn(clientId, scopes);
-  return acquireFn;
+  return exchangeFn;
 }
 
 export interface PostLedgerEntryArgs {
   correlationId: string;
   payload: Record<string, unknown>;
+  /**
+   * Inbound subject token (validated broker-issued token from the caller).
+   * Required for RFC 8693 token-exchange; if absent we cannot propagate the
+   * user identity and the outbound call must fail loudly rather than fall
+   * back to anonymous M2M.
+   */
+  subjectToken?: string;
 }
 
 export interface LedgerEntryResponse {
@@ -98,13 +104,20 @@ export async function postLedgerEntry(
   config: ReceivingServiceConfig,
   args: PostLedgerEntryArgs,
 ): Promise<LedgerEntryResponse> {
-  const acquire = await ensureAcquire(config);
-  const token = await acquire(config.ledgerOutboundClientId, ['ledger/write']);
+  if (!args.subjectToken) {
+    throw new LedgerOutboundError(
+      400,
+      '',
+      'ledger outbound requires subjectToken (inbound broker-issued token)',
+    );
+  }
+  const exchange = await ensureExchange(config);
+  const exchanged: ExchangeTokenResult = await exchange({ subjectToken: args.subjectToken });
   const htu = `${config.ledgerServiceUrl}/api/ledger/entries`;
 
   async function attempt(nonce?: string): Promise<Response> {
     const dpopOpts: { accessToken: string; htm: string; htu: string; nonce?: string } = {
-      accessToken: token.accessToken,
+      accessToken: exchanged.accessToken,
       htm: 'POST',
       htu,
     };
@@ -113,7 +126,7 @@ export async function postLedgerEntry(
     return fetchImpl(htu, {
       method: 'POST',
       headers: {
-        'authorization': `DPoP ${token.accessToken}`,
+        'authorization': `DPoP ${exchanged.accessToken}`,
         'dpop': dpop.proof,
         'x-correlation-id': args.correlationId,
         'content-type': 'application/json',
