@@ -1,20 +1,23 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+ROOT="$(cd "$(dirname "$0")/../../../.." && pwd)"
+TF_DIR="$ROOT/infrastructure/terraform"
+OUTPUTS="$TF_DIR/tf-outputs.json"
+
 # Teardown dispatch (must be first so it short-circuits).
 if [[ "${1:-}" == "teardown" ]]; then
-  npm --workspace @s2s/cdk-infra exec -- cdk destroy --all --force
+  cd "$TF_DIR"
+  terraform destroy -auto-approve
   exit 0
 fi
 
 : "${AWS_PROFILE:=s2s-dev}"
 : "${AWS_REGION:=us-east-1}"
-ROOT="$(cd "$(dirname "$0")/../../../.." && pwd)"
-OUTPUTS="$ROOT/packages/cdk-infra/cdk-outputs.json"
 
-# Deterministic image tag passed to CDK via IMAGE_TAG env var (Patch A contract).
-export IMAGE_TAG="$(git rev-parse --short HEAD)"
-# Per-run namespace for E2E dedup keys (Patch F).
+# Deterministic image tag passed to Terraform via TF_VAR_image_tag.
+export TF_VAR_image_tag="$(git rev-parse --short HEAD)"
+# Per-run namespace for E2E dedup keys.
 export E2E_RUN_ID="$(uuidgen)"
 
 echo "==> 1/7  Build SDK + services"
@@ -22,35 +25,37 @@ npm --workspace @s2s/auth-library run build
 npm --workspace @s2s/calling-service run build
 npm --workspace @s2s/receiving-service run build
 
-echo "==> 2/7  CDK deploy infra stacks (excluding ExampleServicesStack)"
-# Deploy infra first; ExampleServicesStack depends on ECR repos populated in step 4.
-npm --workspace @s2s/cdk-infra exec -- cdk deploy \
-  CognitoM2MStack SecretsStack ElastiCacheStack AvpCedarStack \
-  LatticeStack HybridBrokerStack EcrStack \
-  --require-approval never --outputs-file "$OUTPUTS"
+echo "==> 2/7  Terraform apply (infrastructure)"
+cd "$TF_DIR"
+terraform init
+terraform apply -auto-approve
+terraform output -json > "$OUTPUTS"
+cd "$ROOT"
 
 # Parse stack outputs into env vars used by downstream steps.
 ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
 ECR_URI="$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com"
-export AVP_LENDING_POLICY_STORE_ID="$(jq -r '.AvpCedarStack.LendingPolicyStoreId' "$OUTPUTS")"
+export AVP_LENDING_POLICY_STORE_ID="$(jq -r '.avp_lending_policy_store_id.value' "$OUTPUTS")"
 # Plan 03's Cedar upload reads AVP_POLICY_STORE_ID; alias the canonical name to it.
 export AVP_POLICY_STORE_ID="$AVP_LENDING_POLICY_STORE_ID"
-export USER_POOL_ID="$(jq -r '.CognitoM2MStack.UserPoolId' "$OUTPUTS")"
+export USER_POOL_ID="$(jq -r '.cognito_user_pool_id.value' "$OUTPUTS")"
 
-echo "==> 3/7  Build + push Docker images to ECR (tag=$IMAGE_TAG)"
+echo "==> 3/7  Build + push Docker images to ECR (tag=$TF_VAR_image_tag)"
 aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "$ECR_URI"
-docker build -f "$ROOT/packages/examples/calling-service/Dockerfile"   -t "$ECR_URI/s2s-calling-service:$IMAGE_TAG"   "$ROOT"
-docker build -f "$ROOT/packages/examples/receiving-service/Dockerfile" -t "$ECR_URI/s2s-receiving-service:$IMAGE_TAG" "$ROOT"
-docker push "$ECR_URI/s2s-calling-service:$IMAGE_TAG"
-docker push "$ECR_URI/s2s-receiving-service:$IMAGE_TAG"
+docker build -f "$ROOT/packages/examples/calling-service/Dockerfile"   -t "$ECR_URI/s2s-calling-service:$TF_VAR_image_tag"   "$ROOT"
+docker build -f "$ROOT/packages/examples/receiving-service/Dockerfile" -t "$ECR_URI/s2s-receiving-service:$TF_VAR_image_tag" "$ROOT"
+docker push "$ECR_URI/s2s-calling-service:$TF_VAR_image_tag"
+docker push "$ECR_URI/s2s-receiving-service:$TF_VAR_image_tag"
 
-echo "==> 4/7  CDK deploy ExampleServicesStack (consumes IMAGE_TAG)"
-npm --workspace @s2s/cdk-infra exec -- cdk deploy ExampleServicesStack \
-  --require-approval never --outputs-file "$OUTPUTS"
+echo "==> 4/7  Terraform apply again (ECS services pick up new image tag)"
+cd "$TF_DIR"
+terraform apply -auto-approve
+terraform output -json > "$OUTPUTS"
+cd "$ROOT"
 
-# Re-export ALB + queue now that ExampleServicesStack is deployed.
-export ALB_DNS="$(jq -r '.ExampleServicesStack.AlbDnsName' "$OUTPUTS")"
-export QUEUE_URL="$(jq -r '.ExampleServicesStack.LendingQueueUrl' "$OUTPUTS")"
+# Re-export ALB + queue now that example_services is up.
+export ALB_DNS="$(jq -r '.alb_dns_name.value' "$OUTPUTS")"
+export QUEUE_URL="$(jq -r '.lending_queue_url.value' "$OUTPUTS")"
 
 echo "==> 5/7  Upload Cedar policies to AVP"
 npm --workspace @s2s/cedar-policies run upload
@@ -61,7 +66,7 @@ SERVICE_ARNS="$(aws ecs list-services --cluster "$CLUSTER" --query 'serviceArns[
 aws ecs wait services-stable --cluster "$CLUSTER" --services $SERVICE_ARNS
 
 echo "==> 7/7  Run e2e suites (run_id=$E2E_RUN_ID)"
-export CDK_OUTPUTS_PATH="$OUTPUTS"
+export TF_OUTPUTS_PATH="$OUTPUTS"
 npm --workspace @s2s/e2e test
 
 echo "All e2e suites passed."

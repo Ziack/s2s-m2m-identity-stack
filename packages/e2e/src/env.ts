@@ -15,24 +15,33 @@ export interface E2eEnv {
   runId: string;
 }
 
+/**
+ * Shape of `terraform output -json`. Each top-level key is an output name; the
+ * value is `{ value, type, sensitive }`. We only care about `.value`.
+ */
+type TerraformOutputJson = Record<string, { value: string; type?: unknown; sensitive?: boolean }>;
+
+function read(outputs: TerraformOutputJson, key: string): string {
+  return outputs[key]?.value ?? '';
+}
+
 export function loadE2eEnv(): E2eEnv {
-  // Anchor relative to this source file: packages/e2e/src/env.ts → repo root is two `..` to
-  // packages/, then `cdk-infra/cdk-outputs.json` under packages/.
+  // packages/e2e/src/env.ts -> repo root is four `..` -> infrastructure/terraform/tf-outputs.json
   const here = dirname(fileURLToPath(import.meta.url));
-  const defaultOutputsPath = resolve(here, '../../cdk-infra/cdk-outputs.json');
-  const outputsPath = process.env.CDK_OUTPUTS_PATH ?? defaultOutputsPath;
-  const outputs = JSON.parse(readFileSync(outputsPath, 'utf8')) as Record<string, Record<string, string>>;
-  const ex = outputs['ExampleServicesStack'] ?? outputs['ExampleServicesStack'] ?? {};
-  const cog = outputs['CognitoM2MStack'] ?? outputs['CognitoStack'] ?? {};
+  const defaultOutputsPath = resolve(here, '../../../infrastructure/terraform/tf-outputs.json');
+  const outputsPath = process.env.TF_OUTPUTS_PATH ?? defaultOutputsPath;
+  const outputs = JSON.parse(readFileSync(outputsPath, 'utf8')) as TerraformOutputJson;
+
+  const albDns = read(outputs, 'alb_dns_name');
   return {
-    albBaseUrl: process.env.E2E_BASE_URL ?? `http://${ex['AlbDnsName']}`,
-    queueUrl: ex['LendingQueueUrl'] ?? '',
-    queueArn: ex['LendingQueueArn'] ?? '',
+    albBaseUrl: process.env.E2E_BASE_URL ?? (albDns ? `http://${albDns}` : ''),
+    queueUrl: read(outputs, 'lending_queue_url'),
+    queueArn: read(outputs, 'lending_queue_arn'),
     callingLogGroup: '/s2s/calling-service',
     receivingLogGroup: '/s2s/receiving-service',
-    cognitoDomain: cog['CognitoDomain'] ?? process.env.COGNITO_DOMAIN ?? '',
-    clientId: cog['LendingClientId'] ?? process.env.COGNITO_CLIENT_ID ?? '',
-    clientSecretArn: cog['LendingClientSecretArn'] ?? process.env.M2M_CLIENT_SECRET_ARN ?? '',
+    cognitoDomain: read(outputs, 'cognito_domain') || process.env.COGNITO_DOMAIN || '',
+    clientId: read(outputs, 'cognito_lending_client_id') || process.env.COGNITO_CLIENT_ID || '',
+    clientSecretArn: read(outputs, 'secrets_lending_arn') || process.env.M2M_CLIENT_SECRET_ARN || '',
     region: process.env.AWS_REGION ?? 'us-east-1',
     runId: process.env.E2E_RUN_ID ?? 'local',
   };
