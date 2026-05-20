@@ -26,12 +26,19 @@ export class AuthError extends Error {
   public readonly status: number;
   public readonly code: ErrorCode;
   public readonly challengeNonce?: string;
-  constructor(status: number, code: ErrorCode, message: string, opts?: { challengeNonce?: string }) {
+  public details?: Record<string, unknown>;
+  constructor(
+    status: number,
+    code: ErrorCode,
+    message: string,
+    opts?: { challengeNonce?: string; details?: Record<string, unknown> },
+  ) {
     super(message);
     this.name = 'AuthError';
     this.status = status;
     this.code = code;
     if (opts?.challengeNonce) this.challengeNonce = opts.challengeNonce;
+    if (opts?.details) this.details = opts.details;
   }
 }
 
