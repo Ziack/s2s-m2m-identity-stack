@@ -1,7 +1,8 @@
 import { Router, type Request, type Response } from 'express';
 import { randomUUID } from 'node:crypto';
-import { buildAuthMiddleware } from '../lib/buildAuthMiddleware.js';
+import { buildBrokerAuthMiddleware, actorChainAsString } from '../lib/brokerAuthMiddleware.js';
 import type { LedgerServiceConfig } from '../config.js';
+import type { UserContext, ActorChain } from '@s2s/auth-library';
 
 interface LedgerEntry {
   entryId: string;
@@ -22,15 +23,18 @@ type AuthedRequest = Request & {
     reasons?: string[];
     principal?: string;
     action?: string;
+    user?: UserContext;
+    actor_chain?: ActorChain | null;
+    token?: string;
   };
 };
 
 export function entriesRouter(config: LedgerServiceConfig): Router {
   const router = Router();
-  const auth = buildAuthMiddleware(config);
+  const auth = buildBrokerAuthMiddleware(config);
 
   router.post('/ledger/entries', auth, (req: AuthedRequest, res: Response) => {
-    const principal = req.auth?.sub ?? req.auth?.principal ?? 'unknown';
+    const principal = req.auth?.user?.sub ?? req.auth?.sub ?? req.auth?.principal ?? 'unknown';
     const entry: LedgerEntry = {
       entryId: `E-${randomUUID().slice(0, 8)}`,
       status: 'posted',
@@ -40,7 +44,15 @@ export function entriesRouter(config: LedgerServiceConfig): Router {
       createdAt: new Date().toISOString(),
     };
     store.push(entry);
-    res.status(201).json({ entryId: entry.entryId, status: entry.status });
+    res.status(201).json({
+      entryId: entry.entryId,
+      status: entry.status,
+      audit: {
+        user_sub: req.auth?.user?.sub ?? null,
+        user_roles: req.auth?.user?.roles ?? [],
+        actor_chain: actorChainAsString(req.auth?.actor_chain ?? null),
+      },
+    });
   });
 
   router.get('/ledger/entries', auth, (_req: Request, res: Response) => {

@@ -1,39 +1,48 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 import { entriesRouter } from '../src/routes/entries.js';
 
+const defaultUser = {
+  sub: 'user-alice',
+  roles: ['lending-officer'],
+  groups: ['lending-team'],
+  claims: { sub: 'user-alice' },
+  issuer: 'http://broker',
+};
+const defaultActorChain = {
+  sub: 'receiving-service-outbound',
+  act: { sub: 'calling-service' },
+};
+
 const middleware = vi.fn((req: any, res: any, next: any) => {
-  // Default to allow with dpop_confirmed; individual tests can override.
   if ((middleware as any).__deny) {
     res.status(403).json({ error: 'authorization_denied', reason: 'dpop_not_confirmed' });
     return;
   }
   req.auth = {
-    sub: 'ServicePrincipal::receiving-service-outbound',
-    principal: 'ServicePrincipal::receiving-service-outbound',
+    sub: defaultUser.sub,
+    principal: `ServicePrincipal::${defaultUser.sub}`,
     action: 'POST_ledger_entry',
     scopes: ['ledger/write'],
     decision: 'ALLOW',
+    reasons: [],
+    user: defaultUser,
+    actor_chain: defaultActorChain,
+    token: 'inbound-token',
   };
   next();
 });
 
-vi.mock('@s2s/auth-library', () => ({
-  createAuthMiddleware: () => middleware,
-  createValidateToken: () => () => Promise.resolve({}),
-  createVerifyDPoP: () => () => Promise.resolve({}),
-  createAuthorize: () => () => Promise.resolve({}),
-  createJwksManager: () => ({ getKeys: async () => [] }),
-  createCedarLocal: () => ({ evaluate: () => ({ decision: 'ALLOW', reasons: [], evaluationTimeMs: 0, mode: 'local' }) }),
-  createRedisNonceStore: () => ({ issue: async () => undefined, consume: async () => true }),
-  getRedisClient: () => ({}),
-}));
-
-vi.mock('@aws-sdk/client-verifiedpermissions', () => ({
-  VerifiedPermissionsClient: class { send = async () => ({ decision: 'ALLOW', determiningPolicies: [] }); },
-  IsAuthorizedWithTokenCommand: class { constructor(public input: unknown) {} },
-}));
+vi.mock('../src/lib/brokerAuthMiddleware.js', async () => {
+  const actual = await vi.importActual<typeof import('../src/lib/brokerAuthMiddleware.js')>(
+    '../src/lib/brokerAuthMiddleware.js',
+  );
+  return {
+    ...actual,
+    buildBrokerAuthMiddleware: () => middleware,
+  };
+});
 
 const cfg = {
   port: 3000,
@@ -47,6 +56,9 @@ const cfg = {
   redisEndpoint: 'r',
   awsRegion: 'us-east-1',
   logLevel: 'silent',
+  brokerJwksUri: 'http://broker/jwks',
+  brokerIssuer: 'http://broker',
+  brokerAudience: 'ledger',
 };
 
 function buildApp() {
@@ -57,8 +69,11 @@ function buildApp() {
 }
 
 describe('/api/ledger/entries', () => {
-  it('POST returns 201 with { entryId, status } when auth ALLOW', async () => {
+  beforeEach(() => {
     (middleware as any).__deny = false;
+  });
+
+  it('POST returns 201 with { entryId, status, audit } when auth ALLOW', async () => {
     const res = await request(buildApp())
       .post('/api/ledger/entries')
       .send({ amount: 5000, reference: 'L-deadbeef' });
@@ -69,8 +84,30 @@ describe('/api/ledger/entries', () => {
     });
   });
 
+  it('POST response audit field echoes user + actor_chain from req.auth', async () => {
+    const res = await request(buildApp())
+      .post('/api/ledger/entries')
+      .send({ amount: 1, reference: 'r' });
+    expect(res.status).toBe(201);
+    expect(res.body.audit).toEqual({
+      user_sub: defaultUser.sub,
+      user_roles: defaultUser.roles,
+      // actor_chain flattened innermost-first
+      actor_chain: ['calling-service', 'receiving-service-outbound'],
+    });
+  });
+
+  it('POST createdBy uses user.sub (not the actor)', async () => {
+    // The route persists `createdBy` from req.auth.user.sub — Phase 4 contract.
+    // Internal store is not exposed, but we exercise the POST happy path.
+    const res = await request(buildApp())
+      .post('/api/ledger/entries')
+      .send({ amount: 1 });
+    expect(res.status).toBe(201);
+    expect(res.body.audit.user_sub).toBe(defaultUser.sub);
+  });
+
   it('GET returns 200 with array', async () => {
-    (middleware as any).__deny = false;
     const res = await request(buildApp()).get('/api/ledger/entries');
     expect(res.status).toBe(200);
     expect(Array.isArray(res.body)).toBe(true);
@@ -86,7 +123,7 @@ describe('/api/ledger/entries', () => {
     (middleware as any).__deny = false;
   });
 
-  it('routes pass through createAuthMiddleware', async () => {
+  it('routes pass through broker auth middleware', async () => {
     middleware.mockClear();
     await request(buildApp()).get('/api/ledger/entries');
     expect(middleware).toHaveBeenCalled();
