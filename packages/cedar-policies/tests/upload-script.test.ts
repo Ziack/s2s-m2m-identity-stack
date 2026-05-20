@@ -22,7 +22,7 @@ vi.mock('@aws-sdk/client-verifiedpermissions', () => {
   return { VerifiedPermissionsClient, PutSchemaCommand, CreatePolicyCommand, ListPoliciesCommand, DeletePolicyCommand };
 });
 
-import { uploadToAvp } from '../scripts/upload-to-avp.js';
+import { uploadToAvp, BOUNDED_CONTEXTS } from '../scripts/upload-to-avp.js';
 
 describe('upload-to-avp', () => {
   beforeEach(() => {
@@ -38,6 +38,11 @@ describe('upload-to-avp', () => {
     });
     expect(sendMock).toHaveBeenCalled();
     expect(result.schemaUploaded).toBe(true);
-    expect(result.policiesCreated).toBeGreaterThanOrEqual(6);
+    expect(result.policiesCreated).toBeGreaterThanOrEqual(7);
+  });
+
+  it('includes ledger in BOUNDED_CONTEXTS list', () => {
+    expect(BOUNDED_CONTEXTS).toContain('ledger');
+    expect(BOUNDED_CONTEXTS.length).toBeGreaterThanOrEqual(7);
   });
 });

@@ -8,6 +8,22 @@ import {
 } from '@aws-sdk/client-verifiedpermissions';
 import { loadSchema, loadAllPolicies } from '../src/loader.js';
 
+/**
+ * Bounded contexts that map to AVP policy stores. Used to assert the
+ * expected set of `.cedar` files is present before upload — keeps drift
+ * between this list, the terraform module, and the policies directory
+ * obvious.
+ */
+export const BOUNDED_CONTEXTS = [
+  'lending',
+  'deposits',
+  'payments',
+  'fraud',
+  'notifications',
+  'accounts',
+  'ledger',
+] as const;
+
 export interface UploadOptions {
   policyStoreId: string;
   region: string;
