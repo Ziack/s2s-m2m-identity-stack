@@ -9,3 +9,11 @@ coverage/
 # Local workflow artifacts — keep out of the public repo
 .claude/
 docs/superpowers/plans/
+
+# Terraform
+infrastructure/terraform/.terraform/
+*.tfstate
+*.tfstate.backup
+*.tfplan
+crash.log
+tf-outputs.json
