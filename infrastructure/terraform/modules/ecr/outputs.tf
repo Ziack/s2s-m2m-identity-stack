@@ -13,3 +13,11 @@ output "calling_repo_arn" {
 output "receiving_repo_arn" {
   value = aws_ecr_repository.this["s2s-receiving-service"].arn
 }
+
+output "ledger_repo_uri" {
+  value = aws_ecr_repository.this["s2s-ledger-service"].repository_url
+}
+
+output "ledger_repo_arn" {
+  value = aws_ecr_repository.this["s2s-ledger-service"].arn
+}
