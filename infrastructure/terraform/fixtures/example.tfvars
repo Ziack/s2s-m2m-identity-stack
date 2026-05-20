@@ -1,0 +1,10 @@
+region                  = "us-east-1"
+account_id              = "000000000000"
+environment             = "dev"
+cognito_domain_prefix   = "s2s-m2m"
+task_role_arns          = ["arn:aws:iam::000000000000:role/s2s-m2m-task-role-placeholder"]
+onprem_cidr             = "10.50.0.0/16"
+customer_vpn_gateway_ip = "203.0.113.10"
+customer_bgp_asn        = 65000
+image_tag               = "initial"
+availability_zones      = ["us-east-1a", "us-east-1b", "us-east-1c"]
