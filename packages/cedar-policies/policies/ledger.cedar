@@ -4,14 +4,34 @@
 // reached from receiving-service via an outbound OAuth client
 // (`receiving-service-outbound`). Audit-service has read-only access.
 
-// Permit receiving-service-outbound to write ledger entries.
+// Phase 5: receiving-service-outbound writes ledger entries on behalf of the
+// originating user. We require:
+//   - the propagated user holds the loan-officer role
+//   - the actor_chain proves the request originated at calling-service
+//     (defense in depth against direct service-to-ledger calls bypassing the
+//      sync entry point)
 permit (
   principal == M2M::ServicePrincipal::"receiving-service-outbound",
   action == M2M::Action::"POST_ledger_entry",
   resource in M2M::ResourceGroup::"ledger-resources"
 ) when {
   context.dpop_confirmed == true &&
-  context.scopes.contains("ledger/write")
+  context.scopes.contains("ledger/write") &&
+  context has user &&
+  context.user.roles.contains("loan-officer") &&
+  context has actor_chain &&
+  context.actor_chain.contains("calling-service")
+};
+
+// Defense in depth: forbid any principal from writing ledger entries when the
+// propagated user lacks the loan-officer role.
+forbid (
+  principal,
+  action == M2M::Action::"POST_ledger_entry",
+  resource
+) when {
+  context has user &&
+  !context.user.roles.contains("loan-officer")
 };
 
 // Permit audit-service to read individual ledger entries.
