@@ -90,4 +90,22 @@ namespace M2M {
     resource: ResourceGroup,
     context: AuthContext,
   };
+
+  action POST_ledger_entry appliesTo {
+    principal: ServicePrincipal,
+    resource: ResourceGroup,
+    context: AuthContext,
+  };
+
+  action GET_ledger_entry appliesTo {
+    principal: ServicePrincipal,
+    resource: ResourceGroup,
+    context: AuthContext,
+  };
+
+  action LIST_ledger_entries appliesTo {
+    principal: ServicePrincipal,
+    resource: ResourceGroup,
+    context: AuthContext,
+  };
 }
