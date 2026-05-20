@@ -1,16 +1,16 @@
 import { Router, type Request, type Response } from 'express';
 import { randomUUID } from 'node:crypto';
-import { buildAuthMiddleware } from '../lib/buildAuthMiddleware.js';
+import { buildBrokerAuthMiddleware, actorChainAsString } from '../lib/brokerAuthMiddleware.js';
 import { postLedgerEntry, LedgerOutboundError } from '../lib/ledgerClient.js';
 import type { ReceivingServiceConfig } from '../config.js';
+import type { UserContext, ActorChain } from '@s2s/auth-library';
 
 interface Loan { loanId: string; amount: number; applicantId: string; createdBy: string; createdAt: string; }
 const store: Loan[] = [];
 
-// SDK middleware (`createAuthMiddleware`) injects `req.auth = { sub, scopes,
-// decision, reasons }`. Legacy `principal` / `action` keys were never injected
-// by the SDK — we read `sub` directly. The loose shape preserves compatibility
-// with test mocks that may still set `principal`.
+// Broker-aware middleware (`createBrokerAuthMiddleware`) populates
+// `req.auth = { sub, scopes, decision, reasons, user, actor_chain, token }`.
+// The loose shape below tolerates older test mocks that set `principal`.
 type AuthedRequest = Request & {
   auth?: {
     sub?: string;
@@ -19,15 +19,18 @@ type AuthedRequest = Request & {
     reasons?: string[];
     principal?: string;
     action?: string;
+    user?: UserContext;
+    actor_chain?: ActorChain | null;
+    token?: string;
   };
 };
 
 export function loansRouter(config: ReceivingServiceConfig): Router {
   const router = Router();
-  const auth = buildAuthMiddleware(config);
+  const auth = buildBrokerAuthMiddleware(config);
 
   router.post('/loans', auth, async (req: AuthedRequest, res: Response) => {
-    const principal = req.auth?.sub ?? req.auth?.principal ?? 'unknown';
+    const principal = req.auth?.user?.sub ?? req.auth?.sub ?? req.auth?.principal ?? 'unknown';
     const loan: Loan = {
       loanId: `L-${randomUUID().slice(0, 8)}`,
       amount: Number(req.body?.amount ?? 0),
@@ -36,6 +39,14 @@ export function loansRouter(config: ReceivingServiceConfig): Router {
       createdAt: new Date().toISOString(),
     };
     store.push(loan);
+    const userEcho = req.auth?.user
+      ? {
+          sub: req.auth.user.sub,
+          roles: req.auth.user.roles,
+          groups: req.auth.user.groups,
+        }
+      : undefined;
+    const actorChainEcho = actorChainAsString(req.auth?.actor_chain ?? null);
 
     if (config.ledgerOutboundEnabled) {
       const correlationId =
@@ -45,12 +56,18 @@ export function loansRouter(config: ReceivingServiceConfig): Router {
         const ledger = await postLedgerEntry(config, {
           correlationId,
           payload: { loanId: loan.loanId, amount: loan.amount },
+          ...(req.auth?.token ? { subjectToken: req.auth.token } : {}),
         });
         reqLog?.info(
           { event: 'ledger.outbound.success', correlation_id: correlationId, loan_id: loan.loanId, entry_id: ledger.entryId },
           'ledger.outbound.success',
         );
-        res.status(201).json({ ...loan, ledger: { entryId: ledger.entryId, status: ledger.status } });
+        res.status(201).json({
+          ...loan,
+          ledger: { entryId: ledger.entryId, status: ledger.status },
+          ...(userEcho ? { user: userEcho } : {}),
+          actor_chain: actorChainEcho,
+        });
         return;
       } catch (err) {
         reqLog?.error(
@@ -68,7 +85,11 @@ export function loansRouter(config: ReceivingServiceConfig): Router {
       }
     }
 
-    res.status(201).json(loan);
+    res.status(201).json({
+      ...loan,
+      ...(userEcho ? { user: userEcho } : {}),
+      actor_chain: actorChainEcho,
+    });
   });
 
   router.get('/loans', auth, (_req: Request, res: Response) => res.status(200).json(store));

@@ -4,26 +4,64 @@ import request from 'supertest';
 import { loansRouter } from '../src/routes/loans.js';
 import * as ledgerClient from '../src/lib/ledgerClient.js';
 
+// Capture AVP authorize calls so we can assert the broker context shape.
+const authorizeCalls: Array<Record<string, unknown>> = [];
+
+// Default user/actor_chain injected by the mocked broker middleware. Tests
+// can override per-call via `middlewareOverride`.
+const defaultUser = {
+  sub: 'user-alice',
+  roles: ['lending-officer'],
+  groups: ['lending-team'],
+  claims: { sub: 'user-alice', roles: ['lending-officer'], groups: ['lending-team'] },
+  issuer: 'http://broker',
+};
+const defaultActorChain = { sub: 'calling-service' };
+
+// Replace `buildBrokerAuthMiddleware` with a synchronous stand-in that
+// populates `req.auth` with the broker-aware shape. Bypasses real JWKS /
+// DPoP / AVP wiring — these are unit-tested in
+// `test/broker-auth-middleware.test.ts`.
+let middlewareOverride: ((req: any, res: any, next: any) => void) | null = null;
 const middleware = vi.fn((req: any, _res: any, next: any) => {
-  req.auth = { principal: 'ServicePrincipal::lending-client', action: 'POST_loan_application', scopes: ['lending/write'] };
+  if (middlewareOverride) {
+    middlewareOverride(req, _res, next);
+    return;
+  }
+  req.auth = {
+    sub: defaultUser.sub,
+    scopes: ['receiving/write'],
+    decision: 'ALLOW',
+    reasons: [],
+    user: defaultUser,
+    actor_chain: defaultActorChain,
+    token: 'inbound-token-xyz',
+    principal: `ServicePrincipal::${defaultUser.sub}`,
+    action: 'POST_loans',
+  };
+  // Record a synthetic authorize call so tests can inspect AVP context shape.
+  authorizeCalls.push({
+    context: {
+      dpop_confirmed: true,
+      scopes: ['receiving/write'],
+      source_domain: 'receiving',
+      correlation_id: req.headers['x-correlation-id'] ?? 'corr-test',
+      user: { sub: defaultUser.sub, roles: defaultUser.roles, groups: defaultUser.groups },
+      actor_chain: [defaultActorChain.sub],
+    },
+  });
   next();
 });
 
-vi.mock('@s2s/auth-library', () => ({
-  createAuthMiddleware: () => middleware,
-  createValidateToken: () => () => Promise.resolve({}),
-  createVerifyDPoP: () => () => Promise.resolve({}),
-  createAuthorize: () => () => Promise.resolve({}),
-  createJwksManager: () => ({ getKeys: async () => [] }),
-  createCedarLocal: () => ({ evaluate: () => ({ decision: 'ALLOW', reasons: [], evaluationTimeMs: 0, mode: 'local' }) }),
-  createRedisNonceStore: () => ({ issue: async () => undefined, consume: async () => true }),
-  getRedisClient: () => ({}),
-}));
-
-vi.mock('@aws-sdk/client-verifiedpermissions', () => ({
-  VerifiedPermissionsClient: class { send = async () => ({ decision: 'ALLOW', determiningPolicies: [] }); },
-  IsAuthorizedWithTokenCommand: class { constructor(public input: unknown) {} },
-}));
+vi.mock('../src/lib/brokerAuthMiddleware.js', async () => {
+  const actual = await vi.importActual<typeof import('../src/lib/brokerAuthMiddleware.js')>(
+    '../src/lib/brokerAuthMiddleware.js',
+  );
+  return {
+    ...actual,
+    buildBrokerAuthMiddleware: () => middleware,
+  };
+});
 
 const baseCfg = {
   port: 3000, expectedAudience: 'lending', expectedIssuer: 'https://issuer',
@@ -35,6 +73,10 @@ const baseCfg = {
   ledgerOutboundSecretArn: 'arn:aws:secretsmanager:us-east-1:111111111111:secret:m2m/receiving-outbound/client-secret-abc',
   ledgerOutboundEnabled: false,
   cognitoDomain: 'example',
+  brokerJwksUri: 'http://broker/.well-known/jwks.json',
+  brokerIssuer: 'http://broker',
+  brokerAudience: 'receiving',
+  brokerTokenEndpoint: 'http://broker/oauth2/token',
 };
 const cfg = baseCfg;
 
@@ -46,15 +88,41 @@ function buildApp(overrides: Partial<typeof baseCfg> = {}) {
 }
 
 describe('/api/loans', () => {
-  it('POST returns 201 with persisted loan referencing principal', async () => {
+  beforeEach(() => {
+    middlewareOverride = null;
+    authorizeCalls.length = 0;
+  });
+
+  it('POST returns 201 with persisted loan referencing user.sub as principal', async () => {
     const res = await request(buildApp()).post('/api/loans').send({ amount: 1000, applicantId: 'A-1' });
     expect(res.status).toBe(201);
     expect(res.body).toMatchObject({
       loanId: expect.stringMatching(/^L-/),
       amount: 1000,
       applicantId: 'A-1',
-      createdBy: 'ServicePrincipal::lending-client',
+      createdBy: defaultUser.sub,
     });
+  });
+
+  it('POST response echoes user + actor_chain from req.auth', async () => {
+    const res = await request(buildApp()).post('/api/loans').send({ amount: 1, applicantId: 'A-2' });
+    expect(res.status).toBe(201);
+    expect(res.body.user).toEqual({
+      sub: defaultUser.sub,
+      roles: defaultUser.roles,
+      groups: defaultUser.groups,
+    });
+    expect(res.body.actor_chain).toEqual([defaultActorChain.sub]);
+  });
+
+  it('AVP authorize context includes user_context and actor_chain', async () => {
+    await request(buildApp()).post('/api/loans').send({ amount: 1, applicantId: 'A-3' });
+    expect(authorizeCalls.length).toBe(1);
+    const ctx = authorizeCalls[0]!.context as Record<string, unknown>;
+    expect(ctx.user).toMatchObject({ sub: defaultUser.sub, roles: defaultUser.roles });
+    expect(ctx.actor_chain).toEqual([defaultActorChain.sub]);
+    expect(ctx.dpop_confirmed).toBe(true);
+    expect(ctx.source_domain).toBe('receiving');
   });
 
   it('GET returns 200 with array', async () => {
@@ -63,7 +131,7 @@ describe('/api/loans', () => {
     expect(Array.isArray(res.body)).toBe(true);
   });
 
-  it('routes pass through createAuthMiddleware', async () => {
+  it('routes pass through broker auth middleware', async () => {
     middleware.mockClear();
     await request(buildApp()).get('/api/loans');
     expect(middleware).toHaveBeenCalled();
@@ -74,7 +142,7 @@ describe('/api/loans', () => {
       vi.restoreAllMocks();
     });
 
-    it('chains ledger call when LEDGER_OUTBOUND_ENABLED=true', async () => {
+    it('chains ledger call with subjectToken from req.auth when LEDGER_OUTBOUND_ENABLED=true', async () => {
       const spy = vi
         .spyOn(ledgerClient, 'postLedgerEntry')
         .mockResolvedValue({ entryId: 'E-12345', status: 'committed' });
@@ -87,6 +155,7 @@ describe('/api/loans', () => {
       const args = spy.mock.calls[0]?.[1];
       expect(args?.payload).toMatchObject({ amount: 500 });
       expect(args?.payload.loanId).toMatch(/^L-/);
+      expect(args?.subjectToken).toBe('inbound-token-xyz');
     });
 
     it('skips ledger call when LEDGER_OUTBOUND_ENABLED=false', async () => {

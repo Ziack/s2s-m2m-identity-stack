@@ -10,45 +10,55 @@ class NonceReuseError extends Error { code = 'dpop_nonce_reuse' as const; }
 const verifyDPoPMock = vi.fn();
 const generateDPoPNonceMock = vi.fn(() => 'fresh-nonce-abc');
 
-vi.mock('@s2s/auth-library', () => ({
-  createAuthMiddleware: (_opts: any) => async (req: any, res: any, next: any) => {
-    try {
-      await verifyDPoPMock(req, _opts);
-      req.auth = { principal: 'ServicePrincipal::lending-client', action: 'POST_loan_application', scopes: ['lending/write'] };
-      next();
-    } catch (err: any) {
-      if (err.code === 'use_dpop_nonce') {
-        res.setHeader('DPoP-Nonce', generateDPoPNonceMock());
-        res.status(401).json({ error: 'use_dpop_nonce', error_description: 'nonce required', request_id: 'r', timestamp: new Date().toISOString() });
-        return;
+// Replace the broker-aware middleware with a stub that imitates the SDK's
+// nonce-challenge contract on top of the verifyDPoPMock. This test covers
+// the routing surface (correct status codes / headers reach the client),
+// not the real SDK nonce store.
+vi.mock('../src/lib/brokerAuthMiddleware.js', async () => {
+  const actual = await vi.importActual<typeof import('../src/lib/brokerAuthMiddleware.js')>(
+    '../src/lib/brokerAuthMiddleware.js',
+  );
+  return {
+    ...actual,
+    buildBrokerAuthMiddleware: () => async (req: any, res: any, next: any) => {
+      try {
+        await verifyDPoPMock(req);
+        req.auth = {
+          sub: 'user-alice',
+          scopes: ['receiving/write'],
+          decision: 'ALLOW',
+          reasons: [],
+          user: { sub: 'user-alice', roles: [], groups: [], claims: {}, issuer: 'http://broker' },
+          actor_chain: { sub: 'calling-service' },
+          token: 'tok',
+        };
+        next();
+      } catch (err: any) {
+        if (err.code === 'use_dpop_nonce') {
+          res.setHeader('DPoP-Nonce', generateDPoPNonceMock());
+          res.status(401).json({ error: 'use_dpop_nonce', error_description: 'nonce required', request_id: 'r', timestamp: new Date().toISOString() });
+          return;
+        }
+        if (err.code === 'dpop_nonce_reuse') {
+          res.setHeader('WWW-Authenticate', 'DPoP');
+          res.status(401).json({ error: 'dpop_nonce_reuse', error_description: 'nonce consumed', request_id: 'r', timestamp: new Date().toISOString() });
+          return;
+        }
+        next(err);
       }
-      if (err.code === 'dpop_nonce_reuse') {
-        res.setHeader('WWW-Authenticate', 'DPoP');
-        res.status(401).json({ error: 'dpop_nonce_reuse', error_description: 'nonce consumed', request_id: 'r', timestamp: new Date().toISOString() });
-        return;
-      }
-      next(err);
-    }
-  },
-  createValidateToken: () => () => Promise.resolve({}),
-  createVerifyDPoP: () => () => Promise.resolve({}),
-  createAuthorize: () => () => Promise.resolve({}),
-  createRedisNonceStore: () => ({ put: async () => undefined, consume: async () => true }),
-  createJwksManager: () => ({ getKeys: async () => [] }),
-  createCedarLocal: () => ({ evaluate: () => ({ decision: 'ALLOW', reasons: [], evaluationTimeMs: 0, mode: 'local' }) }),
-  getRedisClient: () => ({}),
-}));
-
-vi.mock('@aws-sdk/client-verifiedpermissions', () => ({
-  VerifiedPermissionsClient: class { send = async () => ({ decision: 'ALLOW', determiningPolicies: [] }); },
-  IsAuthorizedWithTokenCommand: class { constructor(public input: unknown) {} },
-}));
+    },
+  };
+});
 
 const cfg = {
   port: 3000, expectedAudience: 'lending', expectedIssuer: 'https://issuer',
   jwksUri: 'https://issuer/.well-known/jwks.json', jwksRefreshHours: 1, nonceTtlSeconds: 120,
   policyStoreId: 'ps', resourcePrefix: 'lending',
   queueUrl: '', queueArn: '', redisEndpoint: 'r', awsRegion: 'us-east-1', logLevel: 'silent',
+  ledgerServiceUrl: '', ledgerOutboundClientId: '', ledgerOutboundSecretArn: '',
+  ledgerOutboundEnabled: false, cognitoDomain: '',
+  brokerJwksUri: 'http://broker/jwks', brokerIssuer: 'http://broker',
+  brokerAudience: 'receiving', brokerTokenEndpoint: 'http://broker/oauth2/token',
 };
 
 function buildApp() {
