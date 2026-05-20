@@ -33,6 +33,35 @@ resource "aws_cognito_resource_server" "context" {
   }
 }
 
+# Dedicated outbound client used by receiving-service to call the ledger
+# service. DPoP is sender-constrained, so each hop is an independent OAuth
+# client; this is the receiving-side credential, scoped to ledger/write.
+resource "aws_cognito_user_pool_client" "receiving_outbound" {
+  user_pool_id    = aws_cognito_user_pool.this.id
+  name            = "receiving-service-outbound"
+  generate_secret = true
+
+  access_token_validity  = 5
+  id_token_validity      = 5
+  refresh_token_validity = 30
+  token_validity_units {
+    access_token  = "minutes"
+    id_token      = "minutes"
+    refresh_token = "days"
+  }
+
+  enable_token_revocation       = true
+  prevent_user_existence_errors = "ENABLED"
+
+  allowed_oauth_flows                  = ["client_credentials"]
+  allowed_oauth_flows_user_pool_client = true
+  allowed_oauth_scopes                 = ["ledger/write"]
+
+  explicit_auth_flows = []
+
+  depends_on = [aws_cognito_resource_server.context]
+}
+
 resource "aws_cognito_user_pool_client" "context" {
   for_each = toset(var.bounded_contexts)
 

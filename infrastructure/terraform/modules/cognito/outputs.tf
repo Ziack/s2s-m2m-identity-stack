@@ -22,3 +22,11 @@ output "lending_client_id" {
 output "batch_client_id" {
   value = aws_cognito_user_pool_client.batch_processor.id
 }
+
+output "ledger_client_id" {
+  value = aws_cognito_user_pool_client.context["ledger"].id
+}
+
+output "receiving_outbound_client_id" {
+  value = aws_cognito_user_pool_client.receiving_outbound.id
+}

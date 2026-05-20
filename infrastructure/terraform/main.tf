@@ -22,7 +22,7 @@ data "aws_caller_identity" "current" {
 }
 
 locals {
-  bounded_contexts = ["lending", "deposits", "payments", "fraud", "notifications", "accounts"]
+  bounded_contexts = ["lending", "deposits", "payments", "fraud", "notifications", "accounts", "ledger"]
   account_id       = var.account_id != "" ? var.account_id : data.aws_caller_identity.current[0].account_id
   region           = var.region
 }
@@ -37,11 +37,12 @@ module "cognito" {
 module "secrets" {
   source = "./modules/secrets"
 
-  bounded_contexts = local.bounded_contexts
-  user_pool_id     = module.cognito.user_pool_id
-  user_pool_arn    = module.cognito.user_pool_arn
-  client_ids       = module.cognito.client_ids
-  task_role_arns   = var.task_role_arns
+  bounded_contexts             = local.bounded_contexts
+  user_pool_id                 = module.cognito.user_pool_id
+  user_pool_arn                = module.cognito.user_pool_arn
+  client_ids                   = module.cognito.client_ids
+  task_role_arns               = var.task_role_arns
+  receiving_outbound_client_id = module.cognito.receiving_outbound_client_id
 }
 
 module "elasticache" {
@@ -85,18 +86,24 @@ module "ecr" {
 module "example_services" {
   source = "./modules/example_services"
 
-  region                      = local.region
-  account_id                  = local.account_id
-  kms_cmk_arn                 = module.secrets.kms_key_arn
-  image_tag                   = var.image_tag
-  vpc_id                      = module.elasticache.vpc_id
-  private_subnet_ids          = module.elasticache.private_subnet_ids
-  workload_security_group_id  = module.elasticache.workload_security_group_id
-  cognito_domain              = "${var.cognito_domain_prefix}.auth.${local.region}.amazoncognito.com"
-  lending_client_id           = module.cognito.lending_client_id
-  lending_client_secret_arn   = module.secrets.lending_secret_arn
-  redis_endpoint              = module.elasticache.valkey_endpoint
-  avp_lending_policy_store_id = module.avp.lending_policy_store_id
-  calling_repo_arn            = module.ecr.calling_repo_arn
-  receiving_repo_arn          = module.ecr.receiving_repo_arn
+  region                        = local.region
+  account_id                    = local.account_id
+  kms_cmk_arn                   = module.secrets.kms_key_arn
+  image_tag                     = var.image_tag
+  vpc_id                        = module.elasticache.vpc_id
+  private_subnet_ids            = module.elasticache.private_subnet_ids
+  workload_security_group_id    = module.elasticache.workload_security_group_id
+  cognito_domain                = "${var.cognito_domain_prefix}.auth.${local.region}.amazoncognito.com"
+  lending_client_id             = module.cognito.lending_client_id
+  lending_client_secret_arn     = module.secrets.lending_secret_arn
+  redis_endpoint                = module.elasticache.valkey_endpoint
+  avp_lending_policy_store_id   = module.avp.lending_policy_store_id
+  calling_repo_arn              = module.ecr.calling_repo_arn
+  receiving_repo_arn            = module.ecr.receiving_repo_arn
+  ledger_repo_arn               = module.ecr.ledger_repo_arn
+  ledger_client_id              = module.cognito.ledger_client_id
+  ledger_secret_arn             = module.secrets.ledger_secret_arn
+  ledger_policy_store_id        = module.avp.ledger_policy_store_id
+  receiving_outbound_client_id  = module.cognito.receiving_outbound_client_id
+  receiving_outbound_secret_arn = module.secrets.receiving_outbound_secret_arn
 }
