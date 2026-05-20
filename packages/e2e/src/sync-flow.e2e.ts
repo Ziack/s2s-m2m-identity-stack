@@ -8,11 +8,12 @@ let env: E2eEnv;
 beforeAll(() => { env = loadE2eEnv(); });
 
 describe('sync flow: Calling Service -> Receiving Service over ALB', () => {
-  it('POST /demo/sync returns 201 with a loanId and createdBy=lending-client principal', async () => {
+  it('POST /demo/sync returns 201 with a loanId, createdBy principal, and (when enabled) ledger entry', async () => {
     const t0 = Date.now();
+    const correlationId = `e2e-sync-${env.runId}-${Date.now()}`;
     const res = await fetch(`${env.albBaseUrl}/demo/sync`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-request-id': `e2e-sync-${env.runId}-${Date.now()}` },
+      headers: { 'content-type': 'application/json', 'x-request-id': correlationId },
       body: JSON.stringify({ amount: 5000, applicantId: 'E2E-APPL-1' }),
     });
     const elapsed = Date.now() - t0;
@@ -21,7 +22,36 @@ describe('sync flow: Calling Service -> Receiving Service over ALB', () => {
     expect(body['loanId']).toMatch(/^L-/);
     expect(body['amount']).toBe(5000);
     expect(String(body['createdBy'])).toContain('ServicePrincipal::');
-    console.log(`[sync e2e] roundtrip=${elapsed}ms`);
+    // When LEDGER_OUTBOUND_ENABLED=true in the deployed stack, receiving
+    // chains a call to the ledger service and surfaces the entryId.
+    const ledger = body['ledger'] as { entryId?: string; status?: string } | undefined;
+    if (ledger) {
+      expect(typeof ledger.entryId).toBe('string');
+      expect(ledger.entryId!.length).toBeGreaterThan(0);
+    }
+    console.log(`[sync e2e] roundtrip=${elapsed}ms ledger=${ledger?.entryId ?? '(disabled)'}`);
+  });
+
+  it('receiving service logs include ledger.outbound.success with matching correlation_id', async () => {
+    const cwl = new CloudWatchLogsClient({ region: env.region });
+    const correlationId = `e2e-ledger-${env.runId}-${Date.now()}`;
+    const res = await fetch(`${env.albBaseUrl}/demo/sync`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-request-id': correlationId },
+      body: JSON.stringify({ amount: 7777, applicantId: 'E2E-LEDGER-1' }),
+    });
+    expect([200, 201]).toContain(res.status);
+    // Allow log fan-in.
+    await new Promise((r) => setTimeout(r, 10_000));
+    const out = await cwl.send(new FilterLogEventsCommand({
+      logGroupName: env.receivingLogGroup,
+      startTime: Date.now() - 5 * 60_000,
+      filterPattern: '"ledger.outbound.success"',
+      limit: 50,
+    }));
+    const events = out.events ?? [];
+    expect(events.length).toBeGreaterThan(0);
+    expect(events.some((e) => (e.message ?? '').includes(correlationId))).toBe(true);
   });
 
   it('receiving service logs include authz_decision=ALLOW for the request', async () => {
