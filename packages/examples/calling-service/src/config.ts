@@ -11,6 +11,17 @@ export interface CallingServiceConfig {
   queueArn: string;
   awsRegion: string;
   logLevel: string;
+  // Phase 3: user-issuer (local IdP) configuration
+  userIssuerUrl: string;
+  userIssuerAudience: string;
+  userIssuerSigningKeySecretArn?: string;
+  userIssuerDevKeyPem?: string;
+  // Phase 3: token-broker configuration
+  brokerTokenEndpoint: string;
+  brokerActorClientId: string;
+  brokerActorSecretArn: string;
+  receivingServiceUrl: string;
+  nodeEnv: string;
 }
 
 function requireEnv(name: string): string {
@@ -20,7 +31,7 @@ function requireEnv(name: string): string {
 }
 
 export function loadConfig(): CallingServiceConfig {
-  return {
+  const cfg: CallingServiceConfig = {
     port: Number(process.env.PORT ?? 3000),
     clientId: requireEnv('COGNITO_CLIENT_ID'),
     cognitoDomain: requireEnv('COGNITO_DOMAIN'),
@@ -33,5 +44,22 @@ export function loadConfig(): CallingServiceConfig {
     queueArn: requireEnv('LENDING_QUEUE_ARN'),
     awsRegion: process.env.AWS_REGION ?? 'us-east-1',
     logLevel: process.env.LOG_LEVEL ?? 'info',
+    userIssuerUrl: requireEnv('USER_ISSUER_URL'),
+    userIssuerAudience: requireEnv('USER_ISSUER_AUDIENCE'),
+    brokerTokenEndpoint: requireEnv('BROKER_TOKEN_ENDPOINT'),
+    brokerActorClientId: requireEnv('BROKER_ACTOR_CLIENT_ID'),
+    brokerActorSecretArn: requireEnv('BROKER_ACTOR_SECRET_ARN'),
+    receivingServiceUrl: process.env.RECEIVING_SERVICE_URL ?? process.env.TARGET_BASE_URL ?? '',
+    nodeEnv: process.env.NODE_ENV ?? 'development',
   };
+  const arn = process.env.USER_ISSUER_SIGNING_KEY_SECRET_ARN;
+  const devPem = process.env.USER_ISSUER_DEV_KEY_PEM;
+  if (!arn && !devPem) {
+    throw new Error(
+      'Missing required env var: USER_ISSUER_SIGNING_KEY_SECRET_ARN (or USER_ISSUER_DEV_KEY_PEM for dev)',
+    );
+  }
+  if (arn) cfg.userIssuerSigningKeySecretArn = arn;
+  if (devPem) cfg.userIssuerDevKeyPem = devPem;
+  return cfg;
 }
