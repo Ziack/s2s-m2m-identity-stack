@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "workspaces": ["packages/*", "packages/examples/*"],
+  "workspaces": ["packages/*", "packages/examples/*", "packages/services/*"],
   "engines": { "node": ">=20.0.0" },
   "scripts": {
     "build": "npm -ws run build",

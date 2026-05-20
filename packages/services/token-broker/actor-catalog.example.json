@@ -1,0 +1,12 @@
+{
+  "calling-service": {
+    "client_secret_hash": "sha256:replace-with-real-sha256-hex",
+    "allowed_audiences": ["receiving"],
+    "allowed_scopes": ["lending/read", "lending/write"]
+  },
+  "receiving-service-outbound": {
+    "client_secret_hash": "sha256:replace-with-real-sha256-hex",
+    "allowed_audiences": ["ledger"],
+    "allowed_scopes": ["ledger/read", "ledger/write"]
+  }
+}
