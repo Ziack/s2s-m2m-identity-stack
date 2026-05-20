@@ -1,8 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { authorize, ctx } from './_helpers.js';
+import { authorize, ctx, USER_ALICE, USER_BOB, USER_CAROL } from './_helpers.js';
 
 const LENDING = 'M2M::ServicePrincipal::"lending-service-client-id"';
 const BATCH = 'M2M::ServicePrincipal::"batch-processor-client-id"';
+const CALLING = 'M2M::ServicePrincipal::"calling-service"';
 const LENDING_RG = 'M2M::ResourceGroup::"lending-resources"';
 const REPORT_RG = 'M2M::ResourceGroup::"reporting-resources"';
 
@@ -81,6 +82,67 @@ describe('lending policies', () => {
       action: 'M2M::Action::"POST_loan_application"',
       resource: 'M2M::ResourceGroup::"pii-resources"',
       context: ctx({ scopes: ['lending/write'] }),
+    });
+    expect(r.decision).toBe('Deny');
+  });
+});
+
+// Phase 5: user-role matrix for calling-service sync entry point.
+describe('lending POST_loan_application with user context (Phase 5)', () => {
+  it('ALLOWS alice (loan-officer) via calling-service chain', () => {
+    const r = authorize({
+      principal: CALLING,
+      action: 'M2M::Action::"POST_loan_application"',
+      resource: LENDING_RG,
+      context: ctx({
+        scopes: ['lending/write'],
+        source_domain: 'lending',
+        user: USER_ALICE,
+        actor_chain: ['calling-service'],
+      }),
+    });
+    expect(r.decision).toBe('Allow');
+  });
+
+  it('ALLOWS bob (auditor) — auditors may file loans for review', () => {
+    const r = authorize({
+      principal: CALLING,
+      action: 'M2M::Action::"POST_loan_application"',
+      resource: LENDING_RG,
+      context: ctx({
+        scopes: ['lending/write'],
+        source_domain: 'lending',
+        user: USER_BOB,
+        actor_chain: ['calling-service'],
+      }),
+    });
+    expect(r.decision).toBe('Allow');
+  });
+
+  it('DENIES carol (reader only) — forbid policy fires', () => {
+    const r = authorize({
+      principal: CALLING,
+      action: 'M2M::Action::"POST_loan_application"',
+      resource: LENDING_RG,
+      context: ctx({
+        scopes: ['lending/write'],
+        source_domain: 'lending',
+        user: USER_CAROL,
+        actor_chain: ['calling-service'],
+      }),
+    });
+    expect(r.decision).toBe('Deny');
+  });
+
+  it('DENIES calling-service request that omits user context', () => {
+    const r = authorize({
+      principal: CALLING,
+      action: 'M2M::Action::"POST_loan_application"',
+      resource: LENDING_RG,
+      context: ctx({
+        scopes: ['lending/write'],
+        source_domain: 'lending',
+      }),
     });
     expect(r.decision).toBe('Deny');
   });

@@ -65,12 +65,20 @@ export function authorize(input: AuthorizeInput): { decision: Decision; reasons:
   };
 }
 
+export interface UserCtx {
+  sub: string;
+  roles: string[];
+  groups: string[];
+}
+
 export function ctx(overrides: Partial<{
   dpop_confirmed: boolean;
   scopes: string[];
   source_domain: string;
   request_hour: number;
   correlation_id: string;
+  user: UserCtx;
+  actor_chain: string[];
 }> = {}): Record<string, unknown> {
   const base = {
     dpop_confirmed: true,
@@ -81,3 +89,20 @@ export function ctx(overrides: Partial<{
   const merged: Record<string, unknown> = { ...base, ...overrides };
   return merged;
 }
+
+// Phase 5 test fixtures — match calling-service hardcoded users.
+export const USER_ALICE: UserCtx = {
+  sub: 'user-alice',
+  roles: ['loan-officer', 'reader'],
+  groups: ['retail-banking'],
+};
+export const USER_BOB: UserCtx = {
+  sub: 'user-bob',
+  roles: ['auditor', 'reader'],
+  groups: ['risk'],
+};
+export const USER_CAROL: UserCtx = {
+  sub: 'user-carol',
+  roles: ['reader'],
+  groups: ['ops'],
+};
