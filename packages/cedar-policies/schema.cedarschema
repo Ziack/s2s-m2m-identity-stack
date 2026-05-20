@@ -1,0 +1,93 @@
+namespace M2M {
+  entity ServicePrincipal {
+    domain: String,
+  };
+
+  entity Resource in [ResourceGroup] {
+    classification: String,
+  };
+
+  entity ResourceGroup in [ResourceGroup] {
+    domain: String,
+  };
+
+  type AuthContext = {
+    dpop_confirmed: Bool,
+    scopes: Set<String>,
+    source_domain: String,
+    request_hour?: Long,
+    correlation_id: String,
+  };
+
+  action POST_loan_application appliesTo {
+    principal: ServicePrincipal,
+    resource: ResourceGroup,
+    context: AuthContext,
+  };
+
+  action GET_loan_status appliesTo {
+    principal: ServicePrincipal,
+    resource: ResourceGroup,
+    context: AuthContext,
+  };
+
+  action POST_deposit appliesTo {
+    principal: ServicePrincipal,
+    resource: ResourceGroup,
+    context: AuthContext,
+  };
+
+  action GET_deposit appliesTo {
+    principal: ServicePrincipal,
+    resource: ResourceGroup,
+    context: AuthContext,
+  };
+
+  action POST_payment appliesTo {
+    principal: ServicePrincipal,
+    resource: ResourceGroup,
+    context: AuthContext,
+  };
+
+  action GET_payment appliesTo {
+    principal: ServicePrincipal,
+    resource: ResourceGroup,
+    context: AuthContext,
+  };
+
+  action POST_fraud_signal appliesTo {
+    principal: ServicePrincipal,
+    resource: ResourceGroup,
+    context: AuthContext,
+  };
+
+  action GET_fraud_case appliesTo {
+    principal: ServicePrincipal,
+    resource: ResourceGroup,
+    context: AuthContext,
+  };
+
+  action POST_notification appliesTo {
+    principal: ServicePrincipal,
+    resource: ResourceGroup,
+    context: AuthContext,
+  };
+
+  action GET_notification_status appliesTo {
+    principal: ServicePrincipal,
+    resource: ResourceGroup,
+    context: AuthContext,
+  };
+
+  action POST_account appliesTo {
+    principal: ServicePrincipal,
+    resource: ResourceGroup,
+    context: AuthContext,
+  };
+
+  action GET_account appliesTo {
+    principal: ServicePrincipal,
+    resource: ResourceGroup,
+    context: AuthContext,
+  };
+}

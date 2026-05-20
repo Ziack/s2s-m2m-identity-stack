@@ -1,0 +1,12 @@
+{
+  "name": "s2s-m2m-identity",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": ["packages/*", "packages/examples/*"],
+  "engines": { "node": ">=20.0.0" },
+  "scripts": {
+    "build": "npm -ws run build",
+    "test": "npm -ws run test"
+  }
+}

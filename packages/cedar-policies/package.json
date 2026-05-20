@@ -1,0 +1,27 @@
+{
+  "name": "@s2s/cedar-policies",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Cedar schema, policies, validation and AVP upload tooling for S2S S2S M2M Identity Stack",
+  "scripts": {
+    "validate": "tsx scripts/validate.ts",
+    "upload": "tsx scripts/upload-to-avp.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@aws-sdk/client-verifiedpermissions": "^3.540.0",
+    "@cedar-policy/cedar-wasm": "^4.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.12.7",
+    "tsx": "^4.9.0",
+    "typescript": "^5.4.5",
+    "vitest": "^1.6.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

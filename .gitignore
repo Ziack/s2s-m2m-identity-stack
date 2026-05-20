@@ -1,0 +1,11 @@
+node_modules/
+dist/
+coverage/
+*.log
+.env
+.env.*
+.DS_Store
+
+# Local workflow artifacts — keep out of the public repo
+.claude/
+docs/superpowers/plans/
