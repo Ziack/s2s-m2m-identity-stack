@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { createHash, timingSafeEqual } from 'node:crypto';
+import { getClientSecret } from '@s2s/auth-library';
 
 export interface ActorCatalogEntry {
   /** Stored as `sha256:<hex>` of the client secret. */
@@ -39,6 +40,31 @@ function constantTimeEqHex(a: string, b: string): boolean {
 
 export function loadActorCatalogFromFile(path: string): ActorCatalog {
   const raw = readFileSync(path, 'utf8');
+  const parsed = JSON.parse(raw) as Record<string, unknown>;
+  return loadActorCatalog(parsed);
+}
+
+export interface LoadActorCatalogFromSecretsManagerOptions {
+  region?: string;
+  /** Override the secret fetcher (tests). */
+  fetchSecret?: (arn: string) => Promise<string>;
+}
+
+/**
+ * Loads the actor catalog from AWS Secrets Manager.
+ *
+ * The secret value must be a JSON object whose shape matches the file
+ * variant — keys are actor client IDs, values are ActorCatalogEntry objects.
+ * Use this when the broker is deployed to ECS/EKS and the catalog is stored
+ * as a Secrets Manager secret (preferred over baking it into the image).
+ */
+export async function loadActorCatalogFromSecretsManager(
+  secretArn: string,
+  opts: LoadActorCatalogFromSecretsManagerOptions = {},
+): Promise<ActorCatalog> {
+  const raw = opts.fetchSecret
+    ? await opts.fetchSecret(secretArn)
+    : await getClientSecret(secretArn, opts.region !== undefined ? { region: opts.region } : {});
   const parsed = JSON.parse(raw) as Record<string, unknown>;
   return loadActorCatalog(parsed);
 }

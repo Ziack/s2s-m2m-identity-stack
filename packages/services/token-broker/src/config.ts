@@ -12,8 +12,17 @@ export interface TokenBrokerConfig {
   userIssuerAudience: string;
   /** JWKS URI of the user issuer. Defaults to `${userIssuerUrl}/.well-known/jwks.json`. */
   userIssuerJwksUri: string;
-  /** Path to the actor catalog JSON file. */
-  actorCatalogPath: string;
+  /**
+   * Path to the actor catalog JSON file. Mutually exclusive with
+   * actorCatalogSecretArn — if the secret ARN is set, the file path is
+   * ignored.
+   */
+  actorCatalogPath?: string;
+  /**
+   * Secrets Manager ARN containing the actor catalog JSON. Takes precedence
+   * over actorCatalogPath when set. Used in deployed environments.
+   */
+  actorCatalogSecretArn?: string;
   /** Redis URL for jti replay store. */
   redisEndpoint: string;
   /** Whether the broker mandates DPoP-bound tokens (advertised as token_type). */
@@ -37,6 +46,11 @@ function requireEnv(name: string): string {
 export function loadConfig(): TokenBrokerConfig {
   const brokerIssuerUrl = requireEnv('BROKER_ISSUER_URL').replace(/\/$/, '');
   const userIssuerUrl = requireEnv('USER_ISSUER_URL').replace(/\/$/, '');
+  const actorCatalogPath = process.env.ACTOR_CATALOG_PATH;
+  const actorCatalogSecretArn = process.env.ACTOR_CATALOG_SECRET_ARN;
+  if (!actorCatalogPath && !actorCatalogSecretArn) {
+    throw new Error('Either ACTOR_CATALOG_PATH or ACTOR_CATALOG_SECRET_ARN must be set');
+  }
   return {
     port: Number(process.env.PORT ?? 3000),
     awsRegion: process.env.AWS_REGION ?? 'us-east-1',
@@ -46,7 +60,8 @@ export function loadConfig(): TokenBrokerConfig {
     userIssuerUrl,
     userIssuerAudience: requireEnv('USER_ISSUER_AUDIENCE'),
     userIssuerJwksUri: process.env.USER_ISSUER_JWKS_URI ?? `${userIssuerUrl}/.well-known/jwks.json`,
-    actorCatalogPath: requireEnv('ACTOR_CATALOG_PATH'),
+    actorCatalogPath,
+    actorCatalogSecretArn,
     redisEndpoint: requireEnv('REDIS_ENDPOINT'),
     dpopRequired: (process.env.DPOP_REQUIRED ?? 'true') !== 'false',
     exchangedTokenTtlSeconds: Number(process.env.EXCHANGED_TOKEN_TTL_SECONDS ?? 600),

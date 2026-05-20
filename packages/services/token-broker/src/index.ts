@@ -4,7 +4,7 @@ import pino from 'pino';
 import { getRedisClient } from '@s2s/auth-library';
 import { loadConfig } from './config.js';
 import { createSigningKeyLoader } from './lib/signingKeyLoader.js';
-import { loadActorCatalogFromFile } from './lib/actorCatalog.js';
+import { loadActorCatalogFromFile, loadActorCatalogFromSecretsManager } from './lib/actorCatalog.js';
 import { createSubjectTokenValidator } from './lib/subjectTokenValidator.js';
 import { createReplayStore } from './lib/replayStore.js';
 import { tokenRouter } from './routes/token.js';
@@ -25,8 +25,13 @@ async function main(): Promise<void> {
   // Warm cache at startup so /jwks.json serves immediately.
   await signingKey.get();
 
-  const catalog = loadActorCatalogFromFile(config.actorCatalogPath);
-  logger.info({ actors: catalog.list() }, 'actor catalog loaded');
+  const catalog = config.actorCatalogSecretArn
+    ? await loadActorCatalogFromSecretsManager(config.actorCatalogSecretArn, { region: config.awsRegion })
+    : loadActorCatalogFromFile(config.actorCatalogPath!);
+  logger.info(
+    { actors: catalog.list(), source: config.actorCatalogSecretArn ? 'secrets-manager' : 'file' },
+    'actor catalog loaded',
+  );
 
   const subjectValidator = createSubjectTokenValidator({
     brokerIssuerUrl: config.brokerIssuerUrl,

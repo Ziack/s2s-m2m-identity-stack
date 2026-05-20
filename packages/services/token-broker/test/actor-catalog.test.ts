@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { loadActorCatalog, hashClientSecret, loadActorCatalogFromFile } from '../src/lib/actorCatalog.js';
+import {
+  loadActorCatalog,
+  hashClientSecret,
+  loadActorCatalogFromFile,
+  loadActorCatalogFromSecretsManager,
+} from '../src/lib/actorCatalog.js';
 import { writeTempActorCatalog, sha256Hex } from './helpers/testFixtures.js';
 
 describe('actorCatalog', () => {
@@ -40,6 +45,22 @@ describe('actorCatalog', () => {
         a: { client_secret_hash: 'md5:abc', allowed_audiences: [], allowed_scopes: [] },
       }),
     ).toThrow(/unsupported client_secret_hash/);
+  });
+
+  it('loads from a Secrets Manager secret (JSON string payload)', async () => {
+    const payload = JSON.stringify({
+      'calling-service': {
+        client_secret_hash: hashClientSecret('s3cr3t'),
+        allowed_audiences: ['receiving'],
+        allowed_scopes: ['lending/write'],
+      },
+    });
+    const catalog = await loadActorCatalogFromSecretsManager('arn:aws:secretsmanager:us-east-1:0:secret:fake', {
+      fetchSecret: async (_arn) => payload,
+    });
+    expect(catalog.list()).toEqual(['calling-service']);
+    expect(catalog.authenticate('calling-service', 's3cr3t')).toBe(true);
+    expect(catalog.get('calling-service')?.allowed_audiences).toEqual(['receiving']);
   });
 
   it('loads from a JSON file on disk', () => {
