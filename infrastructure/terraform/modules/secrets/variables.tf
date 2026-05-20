@@ -22,3 +22,14 @@ variable "task_role_arns" {
   description = "ARNs of ECS task / EKS pod roles allowed to read the secrets (resource policy)"
   type        = list(string)
 }
+
+variable "receiving_outbound_client_id" {
+  description = "Cognito client id of the receiving-service-outbound app client (templated into the receiving-outbound secret)"
+  type        = string
+}
+
+variable "receiving_outbound_task_role_arns" {
+  description = "ARNs of task roles permitted to read the receiving-outbound secret in addition to the standard task_role_arns. Pass receiving-service task role here when wiring example_services."
+  type        = list(string)
+  default     = []
+}

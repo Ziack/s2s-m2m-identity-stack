@@ -61,7 +61,7 @@ data "aws_iam_policy_document" "rotation_inline" {
       "secretsmanager:PutSecretValue",
       "secretsmanager:UpdateSecretVersionStage",
     ]
-    resources = [for s in aws_secretsmanager_secret.context : s.arn]
+    resources = concat([for s in aws_secretsmanager_secret.context : s.arn], [aws_secretsmanager_secret.receiving_outbound.arn])
   }
 
   statement {
@@ -168,5 +168,69 @@ resource "aws_secretsmanager_secret_rotation" "context" {
     aws_lambda_permission.secrets_manager,
     aws_iam_role_policy.rotation_inline,
     aws_secretsmanager_secret_version.context_seed,
+  ]
+}
+
+# --- receiving-service-outbound secret --------------------------------------
+# Separate secret because the receiving-outbound OAuth client is not a
+# bounded-context client_id — it's the credential receiving-service uses to
+# call the downstream ledger.
+
+resource "aws_secretsmanager_secret" "receiving_outbound" {
+  name        = "m2m/receiving-outbound/client-secret"
+  description = "Cognito M2M client_secret for receiving-service-outbound (calls ledger)"
+  kms_key_id  = aws_kms_key.secrets.arn
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
+resource "aws_secretsmanager_secret_version" "receiving_outbound_seed" {
+  secret_id = aws_secretsmanager_secret.receiving_outbound.id
+  secret_string = jsonencode({
+    user_pool_id  = var.user_pool_id
+    client_id     = var.receiving_outbound_client_id
+    client_secret = "PENDING_BOOTSTRAP"
+  })
+}
+
+data "aws_iam_policy_document" "deny_except_receiving_outbound_roles" {
+  statement {
+    sid     = "DenyAllExceptReceivingOutboundRoles"
+    effect  = "Deny"
+    actions = ["secretsmanager:GetSecretValue"]
+    principals {
+      type        = "AWS"
+      identifiers = ["*"]
+    }
+    resources = ["*"]
+    condition {
+      test     = "StringNotEquals"
+      variable = "aws:PrincipalArn"
+      # Union of the standard task roles plus any explicit
+      # receiving-service task role passed in from root.
+      values = concat(var.task_role_arns, var.receiving_outbound_task_role_arns)
+    }
+  }
+}
+
+resource "aws_secretsmanager_secret_policy" "receiving_outbound" {
+  secret_arn = aws_secretsmanager_secret.receiving_outbound.arn
+  policy     = data.aws_iam_policy_document.deny_except_receiving_outbound_roles.json
+}
+
+resource "aws_secretsmanager_secret_rotation" "receiving_outbound" {
+  secret_id           = aws_secretsmanager_secret.receiving_outbound.id
+  rotation_lambda_arn = aws_lambda_function.rotation.arn
+
+  rotation_rules {
+    automatically_after_days = 90
+  }
+
+  depends_on = [
+    aws_lambda_permission.secrets_manager,
+    aws_iam_role_policy.rotation_inline,
+    aws_secretsmanager_secret_version.receiving_outbound_seed,
   ]
 }
