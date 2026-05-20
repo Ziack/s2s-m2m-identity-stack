@@ -1,7 +1,9 @@
 locals {
-  policy_store_arn = "arn:aws:verifiedpermissions::${var.account_id}:policy-store/${var.avp_lending_policy_store_id}"
-  calling_image    = "${replace(var.calling_repo_arn, "arn:aws:ecr:${var.region}:${var.account_id}:repository/", "${var.account_id}.dkr.ecr.${var.region}.amazonaws.com/")}:${var.image_tag}"
-  receiving_image  = "${replace(var.receiving_repo_arn, "arn:aws:ecr:${var.region}:${var.account_id}:repository/", "${var.account_id}.dkr.ecr.${var.region}.amazonaws.com/")}:${var.image_tag}"
+  policy_store_arn        = "arn:aws:verifiedpermissions::${var.account_id}:policy-store/${var.avp_lending_policy_store_id}"
+  ledger_policy_store_arn = "arn:aws:verifiedpermissions::${var.account_id}:policy-store/${var.ledger_policy_store_id}"
+  calling_image           = "${replace(var.calling_repo_arn, "arn:aws:ecr:${var.region}:${var.account_id}:repository/", "${var.account_id}.dkr.ecr.${var.region}.amazonaws.com/")}:${var.image_tag}"
+  receiving_image         = "${replace(var.receiving_repo_arn, "arn:aws:ecr:${var.region}:${var.account_id}:repository/", "${var.account_id}.dkr.ecr.${var.region}.amazonaws.com/")}:${var.image_tag}"
+  ledger_image            = "${replace(var.ledger_repo_arn, "arn:aws:ecr:${var.region}:${var.account_id}:repository/", "${var.account_id}.dkr.ecr.${var.region}.amazonaws.com/")}:${var.image_tag}"
 }
 
 # --- SQS: lending decisions queue + DLQ -------------------------------------
@@ -69,7 +71,7 @@ data "aws_iam_policy_document" "execution_ecr" {
       "ecr:GetDownloadUrlForLayer",
       "ecr:BatchGetImage",
     ]
-    resources = [var.calling_repo_arn, var.receiving_repo_arn]
+    resources = [var.calling_repo_arn, var.receiving_repo_arn, var.ledger_repo_arn]
   }
 }
 
@@ -123,7 +125,7 @@ resource "aws_iam_role" "receiving_task" {
 data "aws_iam_policy_document" "receiving_task" {
   statement {
     actions   = ["secretsmanager:GetSecretValue", "secretsmanager:DescribeSecret"]
-    resources = [var.lending_client_secret_arn]
+    resources = [var.lending_client_secret_arn, var.receiving_outbound_secret_arn]
   }
   statement {
     actions   = ["kms:Decrypt"]
@@ -155,6 +157,38 @@ resource "aws_iam_role_policy" "receiving_task" {
   policy = data.aws_iam_policy_document.receiving_task.json
 }
 
+# Ledger task role: secret read (own client_secret), AVP against ledger
+# policy store, ElastiCache describe. Strictly least-privilege; no SQS.
+resource "aws_iam_role" "ledger_task" {
+  name_prefix        = "s2s-ledger-task-"
+  assume_role_policy = data.aws_iam_policy_document.ecs_assume.json
+}
+
+data "aws_iam_policy_document" "ledger_task" {
+  statement {
+    actions   = ["secretsmanager:GetSecretValue", "secretsmanager:DescribeSecret"]
+    resources = [var.ledger_secret_arn]
+  }
+  statement {
+    actions   = ["kms:Decrypt"]
+    resources = [var.kms_cmk_arn]
+  }
+  statement {
+    actions   = ["verifiedpermissions:IsAuthorizedWithToken"]
+    resources = [local.ledger_policy_store_arn]
+  }
+  statement {
+    actions   = ["elasticache:DescribeCacheClusters", "elasticache:DescribeServerlessCaches"]
+    resources = ["*"]
+  }
+}
+
+resource "aws_iam_role_policy" "ledger_task" {
+  name   = "ledger-task"
+  role   = aws_iam_role.ledger_task.id
+  policy = data.aws_iam_policy_document.ledger_task.json
+}
+
 # --- ECS cluster + log groups -----------------------------------------------
 
 resource "aws_ecs_cluster" "this" {
@@ -178,6 +212,11 @@ resource "aws_cloudwatch_log_group" "calling" {
 
 resource "aws_cloudwatch_log_group" "receiving" {
   name              = "/s2s/receiving-service"
+  retention_in_days = 30
+}
+
+resource "aws_cloudwatch_log_group" "ledger" {
+  name              = "/s2s/ledger-service"
   retention_in_days = 30
 }
 
@@ -256,6 +295,37 @@ resource "aws_lb_target_group" "calling" {
     interval            = 15
     healthy_threshold   = 2
     unhealthy_threshold = 3
+  }
+}
+
+resource "aws_lb_target_group" "ledger" {
+  name        = "s2s-ledger-tg"
+  port        = 3000
+  protocol    = "HTTP"
+  target_type = "ip"
+  vpc_id      = var.vpc_id
+
+  health_check {
+    path                = "/health"
+    interval            = 15
+    healthy_threshold   = 2
+    unhealthy_threshold = 3
+  }
+}
+
+resource "aws_lb_listener_rule" "ledger" {
+  listener_arn = aws_lb_listener.http.arn
+  priority     = 5
+
+  action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.ledger.arn
+  }
+
+  condition {
+    path_pattern {
+      values = ["/api/ledger/*"]
+    }
   }
 }
 
@@ -365,6 +435,10 @@ resource "aws_ecs_task_definition" "receiving" {
       { name = "RESOURCE_PREFIX", value = "lending" },
       { name = "LENDING_QUEUE_URL", value = aws_sqs_queue.lending.url },
       { name = "LENDING_QUEUE_ARN", value = aws_sqs_queue.lending.arn },
+      { name = "LEDGER_SERVICE_URL", value = "http://${aws_lb.this.dns_name}" },
+      { name = "LEDGER_OUTBOUND_CLIENT_ID", value = var.receiving_outbound_client_id },
+      { name = "LEDGER_OUTBOUND_SECRET_ARN", value = var.receiving_outbound_secret_arn },
+      { name = "LEDGER_OUTBOUND_ENABLED", value = "true" },
     ]
     logConfiguration = {
       logDriver = "awslogs"
@@ -372,6 +446,48 @@ resource "aws_ecs_task_definition" "receiving" {
         awslogs-group         = aws_cloudwatch_log_group.receiving.name
         awslogs-region        = var.region
         awslogs-stream-prefix = "receiving"
+      }
+    }
+  }])
+}
+
+resource "aws_ecs_task_definition" "ledger" {
+  family                   = "s2s-ledger-service"
+  cpu                      = "512"
+  memory                   = "1024"
+  network_mode             = "awsvpc"
+  requires_compatibilities = ["FARGATE"]
+  execution_role_arn       = aws_iam_role.execution.arn
+  task_role_arn            = aws_iam_role.ledger_task.arn
+
+  runtime_platform {
+    cpu_architecture        = "X86_64"
+    operating_system_family = "LINUX"
+  }
+
+  container_definitions = jsonencode([{
+    name                   = "app"
+    image                  = local.ledger_image
+    essential              = true
+    readonlyRootFilesystem = true
+    portMappings           = [{ containerPort = 3000, protocol = "tcp" }]
+    environment = [
+      { name = "PORT", value = "3000" },
+      { name = "AWS_REGION", value = var.region },
+      { name = "COGNITO_CLIENT_ID", value = var.ledger_client_id },
+      { name = "COGNITO_DOMAIN", value = var.cognito_domain },
+      { name = "M2M_CLIENT_SECRET_ARN", value = var.ledger_secret_arn },
+      { name = "REDIS_ENDPOINT", value = var.redis_endpoint },
+      { name = "AVP_POLICY_STORE_ID", value = var.ledger_policy_store_id },
+      { name = "EXPECTED_AUDIENCE", value = var.ledger_audience },
+      { name = "RESOURCE_PREFIX", value = var.ledger_audience },
+    ]
+    logConfiguration = {
+      logDriver = "awslogs"
+      options = {
+        awslogs-group         = aws_cloudwatch_log_group.ledger.name
+        awslogs-region        = var.region
+        awslogs-stream-prefix = "ledger"
       }
     }
   }])
@@ -425,4 +541,29 @@ resource "aws_ecs_service" "receiving" {
   }
 
   depends_on = [aws_lb_listener_rule.receiving]
+}
+
+resource "aws_ecs_service" "ledger" {
+  name             = "ledger-service"
+  cluster          = aws_ecs_cluster.this.id
+  task_definition  = aws_ecs_task_definition.ledger.arn
+  desired_count    = 2
+  launch_type      = "FARGATE"
+  platform_version = "LATEST"
+
+  enable_execute_command = true
+
+  network_configuration {
+    subnets          = var.private_subnet_ids
+    security_groups  = [var.workload_security_group_id]
+    assign_public_ip = false
+  }
+
+  load_balancer {
+    target_group_arn = aws_lb_target_group.ledger.arn
+    container_name   = "app"
+    container_port   = 3000
+  }
+
+  depends_on = [aws_lb_listener_rule.ledger]
 }

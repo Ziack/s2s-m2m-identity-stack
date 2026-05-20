@@ -55,3 +55,32 @@ variable "calling_repo_arn" {
 variable "receiving_repo_arn" {
   type = string
 }
+
+variable "ledger_repo_arn" {
+  type = string
+}
+
+variable "ledger_client_id" {
+  type = string
+}
+
+variable "ledger_secret_arn" {
+  type = string
+}
+
+variable "ledger_policy_store_id" {
+  type = string
+}
+
+variable "receiving_outbound_client_id" {
+  type = string
+}
+
+variable "receiving_outbound_secret_arn" {
+  type = string
+}
+
+variable "ledger_audience" {
+  type    = string
+  default = "ledger"
+}
