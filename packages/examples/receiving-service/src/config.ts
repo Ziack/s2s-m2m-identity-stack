@@ -17,6 +17,14 @@ export interface ReceivingServiceConfig {
   ledgerOutboundSecretArn: string;
   ledgerOutboundEnabled: boolean;
   cognitoDomain: string;
+  /** Broker JWKS endpoint used to verify inbound broker-issued tokens. */
+  brokerJwksUri: string;
+  /** Broker `iss` value expected on inbound tokens. */
+  brokerIssuer: string;
+  /** Audience expected on inbound broker-issued tokens (i.e. this service's identifier). */
+  brokerAudience: string;
+  /** Broker token-exchange endpoint used for outbound calls to ledger. */
+  brokerTokenEndpoint: string;
 }
 
 function requireEnv(name: string): string {
@@ -46,5 +54,9 @@ export function loadConfig(): ReceivingServiceConfig {
     ledgerOutboundSecretArn: process.env.LEDGER_OUTBOUND_SECRET_ARN ?? '',
     ledgerOutboundEnabled,
     cognitoDomain: process.env.COGNITO_DOMAIN ?? '',
+    brokerJwksUri: process.env.BROKER_JWKS_URI ?? '',
+    brokerIssuer: process.env.BROKER_ISSUER ?? '',
+    brokerAudience: process.env.BROKER_AUDIENCE ?? 'receiving',
+    brokerTokenEndpoint: process.env.BROKER_TOKEN_ENDPOINT ?? '',
   };
 }
