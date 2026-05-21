@@ -29,9 +29,13 @@ data "aws_ssm_parameter" "ledger_lattice_dns" {
 
 locals {
   # Lattice env injected into the receiving-service task when Lattice is enabled.
+  # Only the data-plane callee (ledger) DNS is threaded: the control-plane broker
+  # token-exchange stays on the broker ALB (client_secret_basic) and uses
+  # BROKER_TOKEN_ENDPOINT in BOTH modes, so BROKER_LATTICE_DNS is intentionally
+  # NOT injected. The platform broker_lattice_dns is still consumed by the
+  # s2s-service module's `platform` object (see main.tf) for service registration.
   lattice_env = var.enable_lattice ? {
     USE_LATTICE        = "true"
     LEDGER_LATTICE_DNS = data.aws_ssm_parameter.ledger_lattice_dns[0].value
-    BROKER_LATTICE_DNS = data.aws_ssm_parameter.platform_lattice["broker_lattice_dns"].value
   } : {}
 }

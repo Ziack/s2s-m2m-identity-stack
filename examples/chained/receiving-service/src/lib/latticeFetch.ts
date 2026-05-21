@@ -7,10 +7,13 @@
  *     so the DPoP-bound access token moves to `X-DPoP-Token` (`DPOP_TOKEN_HEADER`)
  *     and the DPoP proof stays in `DPoP` (its `htu` binds to the Lattice URL).
  *
- * `useLattice()` centralises the gate so both the ledger call and the broker
- * token-exchange make the same transport decision.
+ * Transport split: `useLattice()` gates ONLY the data-plane hop (receiving →
+ * ledger). The control-plane broker token-exchange always uses the broker's ALB
+ * endpoint with `client_secret_basic` regardless of this gate, because SigV4 and
+ * `client_secret_basic` both own the `Authorization` header and cannot coexist
+ * on one request (see ledgerClient.ts).
  */
-import { createLatticeFetch, DPOP_TOKEN_HEADER, type LatticeFetchFn } from '@s2s/auth-library';
+import { createLatticeFetch, type LatticeFetchFn } from '@s2s/auth-library';
 
 /** True when the service should route outbound calls over VPC Lattice + SigV4. */
 export function useLattice(): boolean {
@@ -29,44 +32,4 @@ export function getLatticeFetch(region: string): LatticeFetchFn {
     latticeFetchFn = createLatticeFetch({ region });
   }
   return latticeFetchFn;
-}
-
-/**
- * A `typeof fetch`-shaped adapter over {@link createLatticeFetch}, suitable for
- * passing as `fetchImpl` to SDK factories such as `createExchangeToken`.
- *
- * Relocates a `DPoP|Bearer` Authorization token into `X-DPoP-Token` before
- * signing; a `Basic` credential (broker `client_secret_basic`) is left in place
- * — SigV4 overwrites it (see the broker-auth note in the Phase 4 report).
- */
-export function latticeFetchAdapter(region: string): typeof fetch {
-  const sign = getLatticeFetch(region);
-  return (async (input: Parameters<typeof fetch>[0], init?: RequestInit): Promise<Response> => {
-    const url =
-      typeof input === 'string'
-        ? input
-        : input instanceof URL
-          ? input.toString()
-          : (input as { url: string }).url;
-    const method = (init?.method ?? 'GET').toUpperCase();
-
-    const headers: Record<string, string> = {};
-    if (init?.headers) {
-      const h = new Headers(init.headers);
-      h.forEach((value, key) => { headers[key] = value; });
-    }
-
-    const auth = headers['authorization'] ?? headers['Authorization'];
-    if (auth) {
-      const m = auth.match(/^(?:DPoP|Bearer)\s+(.+)$/i);
-      if (m) {
-        delete headers['authorization'];
-        delete headers['Authorization'];
-        headers[DPOP_TOKEN_HEADER] = m[1] as string;
-      }
-    }
-
-    const body = typeof init?.body === 'string' ? init.body : undefined;
-    return sign({ url, method, headers, ...(body !== undefined ? { body } : {}) });
-  }) as typeof fetch;
 }

@@ -7,7 +7,6 @@
  * real factory via `setExchangeTokenForTest`.
  */
 import { createExchangeToken, getClientSecret, type ExchangeTokenFn } from '@s2s/auth-library';
-import { latticeFetchAdapter, useLattice } from './latticeFetch.js';
 import type { CallingServiceConfig } from '../config.js';
 
 let exchangeFn: ExchangeTokenFn | null = null;
@@ -18,16 +17,14 @@ export function setExchangeTokenForTest(fn: ExchangeTokenFn | null): void {
 
 export function initExchangeClient(config: CallingServiceConfig): void {
   if (exchangeFn) return;
-  // Lattice mode: hit the broker's Lattice DNS and SigV4-sign the exchange via
-  // the lattice fetch adapter. Otherwise use the broker token endpoint over the
-  // default fetch (ALB path).
-  const lattice = useLattice() && !!config.brokerLatticeDns;
-  const brokerUrl = lattice
-    ? `https://${config.brokerLatticeDns}${new URL(config.brokerTokenEndpoint).pathname}`
-    : config.brokerTokenEndpoint;
+  // Control plane: the broker token-exchange ALWAYS uses the broker's ALB
+  // endpoint with `client_secret_basic` (Authorization: Basic ...), in BOTH
+  // Lattice and non-Lattice modes. SigV4 (used for the Lattice data plane) also
+  // owns the Authorization header, so routing the exchange over Lattice would
+  // clobber the Basic credential and the frozen broker would reject it. Only the
+  // data-plane hops (calling → receiving, receiving → ledger) ride Lattice+SigV4.
   exchangeFn = createExchangeToken({
-    brokerUrl,
-    ...(lattice ? { fetchImpl: latticeFetchAdapter(config.awsRegion) } : {}),
+    brokerUrl: config.brokerTokenEndpoint,
     actorClientId: config.brokerActorClientId,
     actorClientSecret: async () => {
       const raw = await getClientSecret(config.brokerActorSecretArn, config.awsRegion);

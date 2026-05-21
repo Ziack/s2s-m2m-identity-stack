@@ -22,11 +22,12 @@ export interface CallingServiceConfig {
   brokerActorSecretArn: string;
   receivingServiceUrl: string;
   nodeEnv: string;
-  // Phase 4: VPC Lattice outbound (SigV4). When useLattice is true, outbound
-  // calls target the *LatticeDns endpoints and are SigV4-signed.
+  // Phase 4: VPC Lattice outbound (SigV4). When useLattice is true, the
+  // service→service data-plane hop (calling → receiving) targets the
+  // receiving Lattice DNS and is SigV4-signed. The control-plane broker
+  // token-exchange always stays on the broker ALB (client_secret_basic).
   useLattice: boolean;
   receivingLatticeDns: string;
-  brokerLatticeDns: string;
 }
 
 function requireEnv(name: string): string {
@@ -58,7 +59,6 @@ export function loadConfig(): CallingServiceConfig {
     nodeEnv: process.env.NODE_ENV ?? 'development',
     useLattice: (process.env.USE_LATTICE ?? '').toLowerCase() === 'true',
     receivingLatticeDns: process.env.RECEIVING_LATTICE_DNS ?? '',
-    brokerLatticeDns: process.env.BROKER_LATTICE_DNS ?? '',
   };
   const arn = process.env.USER_ISSUER_SIGNING_KEY_SECRET_ARN;
   const devPem = process.env.USER_ISSUER_DEV_KEY_PEM;
