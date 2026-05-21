@@ -10,7 +10,13 @@
     "examples/basic/*",
     "examples/chained/*",
     "examples/multi-context/*",
-    "examples/chained/e2e"
+    "examples/chained/e2e",
+    "examples/migrations/from-passport-jwt/before",
+    "examples/migrations/from-passport-jwt/after",
+    "examples/migrations/from-casbin-rbac/before",
+    "examples/migrations/from-casbin-rbac/after",
+    "examples/migrations/from-no-auth/before",
+    "examples/migrations/from-no-auth/after"
   ],
   "engines": {
     "node": ">=20.0.0"
