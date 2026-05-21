@@ -189,7 +189,41 @@ Replace your Dockerfile with the standardised multi-stage `node:20-alpine` templ
 
 ## Phase 5 — Terraform onboarding
 
-_To be filled in subsequent task._
+**1. Cedar policies.** Author one or more `.cedar` files in `terraform/policies/`. See [cedar-rbac-translation.md](./cedar-rbac-translation.md) for translating existing RBAC strings.
+
+**2. Scaffold the TF root.**
+
+```bash
+cd existing-app/
+npm create @s2s/service@latest --existing-app .
+```
+
+`--existing-app .` (shipped by Plan 2) scaffolds only `terraform/`, `policies/`, and `.s2s-config.json`. It does NOT overwrite `src/`, `package.json`, or `Dockerfile`. Assumes Phases 2–4 are done.
+
+**3. Build + push.**
+
+```bash
+npm run docker:build && npm run docker:push
+```
+
+**4. Apply infra.**
+
+```bash
+cd terraform
+terraform init
+terraform apply
+```
+
+**5. Smoke test.**
+
+```bash
+curl https://$(terraform output -raw service_url)/health
+# expect: {"status":"ok"}
+```
+
+**6. Cut over.** Update DNS / ALB upstream / API Gateway integration to the new `service_url`. Decommission the old deployment after confirmation.
+
+**Acceptance criteria.** Phase 5 complete when (1) `terraform apply` succeeds, (2) the `/health` smoke test passes, (3) all traffic is routed to the new service, (4) the old deployment is removed.
 
 ## Anti-patterns
 
