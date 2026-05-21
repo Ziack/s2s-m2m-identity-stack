@@ -38,6 +38,9 @@ locals {
     private_subnet_ids         = ["subnet-fake-a", "subnet-fake-b"]
     policy_store_id            = "ps-fake-lending"
     resource_server_identifier = "lending"
+    enable_lattice             = false
+    lattice_service_network_id = null
+    broker_lattice_dns         = null
     sidecars                   = []
     sidecar_iam_statements     = []
     sidecar_volumes            = []

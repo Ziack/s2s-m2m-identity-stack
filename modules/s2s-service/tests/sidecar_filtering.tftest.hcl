@@ -70,6 +70,9 @@ variables {
     private_subnet_ids         = ["subnet-fake-a", "subnet-fake-b"]
     policy_store_id            = "ps-fake-lending"
     resource_server_identifier = "lending"
+    enable_lattice             = false
+    lattice_service_network_id = null
+    broker_lattice_dns         = null
     sidecars = [
       { name = "universal", image = "x:1", essential = false, cpu = 0, memory = 0, environment = [], secrets = [], mount_points = [], port_mappings = [], depends_on = [], mandatory = true, opt_out_services = [], opt_in_services = [] },
       { name = "targeted", image = "x:1", essential = false, cpu = 0, memory = 0, environment = [], secrets = [], mount_points = [], port_mappings = [], depends_on = [], mandatory = false, opt_out_services = [], opt_in_services = ["loan-origination"] },
