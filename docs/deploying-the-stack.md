@@ -47,6 +47,39 @@ cd s2s
 npm install          # installs every npm workspace (auth-library, broker, services, cedar, e2e)
 ```
 
+## Step 0a — Provision a VPC for dev (optional)
+
+If you already have a VPC with at least two private subnets in different AZs
+and NAT egress, **skip this section** and go straight to step 3.
+
+For a PoC or empty sandbox account, the repo ships a turnkey VPC root at
+[`examples/_bootstrap/`](../examples/_bootstrap/) that creates the minimum
+network the platform needs (VPC + two public + two private subnets + IGW +
+single-AZ NAT + route tables). It is explicitly **not** prod-grade — see
+its README for the limitations.
+
+```bash
+cd examples/_bootstrap
+cp fixtures/dev.tfvars.json.example fixtures/dev.tfvars.json
+$EDITOR fixtures/dev.tfvars.json
+
+tofu init
+tofu apply -var-file=fixtures/dev.tfvars.json
+```
+
+After apply, extract the IDs the platform fixture needs:
+
+```bash
+tofu output -json next_steps | jq -r '. | fromjson'
+```
+
+The output is a JSON object with `vpc_id`, `private_subnet_ids`, and
+`alb_subnet_ids` — paste those three keys directly into
+`examples/_platform/fixtures/dev.tfvars.json` in step 3.
+
+> NAT gateway cost reminder: ~$32/month + $0.045/GB processed. Destroy
+> `_bootstrap/` last during teardown to stop the meter.
+
 ## 3. Fill in `examples/_platform/fixtures/dev.tfvars.json`
 
 ```bash
