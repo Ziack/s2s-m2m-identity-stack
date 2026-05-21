@@ -118,7 +118,74 @@ If the downstream is on S2S already, this is a drop-in replacement. If it isn't,
 
 ## Phase 4 — Container migration
 
-_To be filled in subsequent task._
+Most existing Node apps fail one or more of these eight standardised checks. Address each before Phase 5; the task definition the platform module renders assumes this shape.
+
+### 4.1 Run as non-root
+
+```dockerfile
+RUN addgroup -g 1000 app && adduser -u 1000 -G app -s /bin/sh -D app
+USER 1000:1000
+```
+
+Before switching `USER`, ensure the app directory is owned by the new uid: `RUN chown -R 1000:1000 /app`.
+
+### 4.2 Read-only root filesystem
+
+In the ECS task definition: `readonlyRootFilesystem: true`. App-side, refactor any disk writes to `/tmp` (mount an `emptyDir`/`tmpfs` volume) and remove file-cache-on-disk patterns.
+
+### 4.3 `/health` endpoint
+
+```ts
+app.get('/health', (_req, res) => res.json({ status: 'ok' }));
+```
+
+Place this before any auth middleware so the ALB target group check is unauthenticated.
+
+### 4.4 `/metrics` endpoint
+
+```ts
+import client from 'prom-client';
+client.collectDefaultMetrics();
+app.get('/metrics', async (_req, res) => {
+  res.type(client.register.contentType);
+  res.send(await client.register.metrics());
+});
+```
+
+### 4.5 Lazy-load secrets
+
+```ts
+import { getClientSecret } from '@s2s/auth-library';
+const secret = await getClientSecret(process.env.COGNITO_CLIENT_SECRET_ARN);
+```
+
+Do NOT export `client_secret` as a plain env var in the task definition.
+
+### 4.6 Structured logging
+
+```ts
+import pino from 'pino';
+export const logger = pino({ level: process.env.LOG_LEVEL ?? 'info' });
+```
+
+`pino` defaults to stdout; CloudWatch Logs picks that up via the task's `awslogs` driver.
+
+### 4.7 SIGTERM handling
+
+```ts
+const server = app.listen(port);
+process.on('SIGTERM', () => {
+  logger.info('SIGTERM received; draining');
+  server.close(() => process.exit(0));
+  setTimeout(() => process.exit(1), 10_000).unref();
+});
+```
+
+### 4.8 Replace Dockerfile
+
+Replace your Dockerfile with the standardised multi-stage `node:20-alpine` template from `packages/create-service/template/Dockerfile`. The worked examples under `examples/migrations/*/after/Dockerfile` show the result.
+
+**Acceptance criteria.** Phase 4 complete when (1) container runs as uid 1000, (2) image starts under `readonlyRootFilesystem: true`, (3) `/health` and `/metrics` return 200, (4) no `client_secret` appears in `env`, (5) SIGTERM triggers a clean drain within 10s.
 
 ## Phase 5 — Terraform onboarding
 
