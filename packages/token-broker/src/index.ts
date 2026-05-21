@@ -13,8 +13,12 @@ import { discoveryRouter } from './routes/discovery.js';
 import { buildBrokerMetrics, metricsRouter } from './routes/metrics.js';
 import { healthRouter } from './routes/health.js';
 
-async function main(): Promise<void> {
-  const config = loadConfig();
+/**
+ * Build the broker Express app from a loaded config. Extracted from main()
+ * so the boot integration test can exercise the TF env-var contract end-to-
+ * end without binding a real port.
+ */
+export async function buildApp(config: ReturnType<typeof loadConfig>): Promise<express.Express> {
   const logger = pino({ level: config.logLevel });
 
   const signingKey = createSigningKeyLoader({
@@ -66,11 +70,33 @@ async function main(): Promise<void> {
   app.use(metricsRouter(metrics));
   app.use(tokenRouter({ config, catalog, signingKey, subjectValidator, replayStore, metrics }));
 
+  return app;
+}
+
+async function main(): Promise<void> {
+  const config = loadConfig();
+  const logger = pino({ level: config.logLevel });
+  const app = await buildApp(config);
   app.listen(config.port, () => logger.info({ port: config.port }, 'token-broker listening'));
 }
 
-main().catch((err) => {
-  // eslint-disable-next-line no-console
-  console.error('fatal startup error', err);
-  process.exit(1);
-});
+// Only auto-run main() when this file is executed directly (e.g. `node dist/index.js`).
+// Importing the module (e.g. from the boot integration test) must not start the server.
+const invokedAsScript = (() => {
+  try {
+    const argv1 = process.argv[1];
+    if (!argv1) return false;
+    const url = new URL(`file://${argv1}`).href;
+    return import.meta.url === url;
+  } catch {
+    return false;
+  }
+})();
+
+if (invokedAsScript) {
+  main().catch((err) => {
+    // eslint-disable-next-line no-console
+    console.error('fatal startup error', err);
+    process.exit(1);
+  });
+}
