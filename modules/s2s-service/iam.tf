@@ -55,6 +55,26 @@ data "aws_iam_policy_document" "task" {
       resources = [aws_secretsmanager_secret.client_secret.arn]
     }
   }
+
+  # Outbound SigV4-signed Lattice calls. The task role needs
+  # vpc-lattice-svcs:Invoke to call the broker (token exchange) and any
+  # downstream Lattice services in outbound_audiences.
+  #
+  # Ideally scoped to the exact Lattice service ARNs of the audiences, but those
+  # ARNs belong to OTHER s2s-service instances / the platform broker and aren't
+  # available at plan time (cross-instance reference). Pragmatic scope: all
+  # Lattice services in THIS account. TIGHTENING PATH: once callees publish their
+  # lattice_service_arn output, the consumer can replace the wildcard with the
+  # specific ARNs. Gated so a service that neither calls the broker nor any
+  # audience gets no statement at all.
+  dynamic "statement" {
+    for_each = (var.calls_broker || length(var.outbound_audiences) > 0) ? [1] : []
+    content {
+      sid       = "InvokeLatticeServices"
+      actions   = ["vpc-lattice-svcs:Invoke"]
+      resources = ["arn:aws:vpc-lattice:${var.platform.region}:${var.platform.account_id}:service/*"]
+    }
+  }
 }
 
 resource "aws_iam_role_policy" "task" {
