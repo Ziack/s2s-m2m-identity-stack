@@ -1,88 +1,198 @@
 #!/usr/bin/env bash
+# Orchestrates a full deploy-and-test cycle for the v2 chained example.
+#
+# Layout assumptions (post-v2 modular split):
+#   examples/_platform/                                      — platform root
+#   examples/chained/{calling,receiving,ledger}-service/     — service code + Dockerfile + terraform/ root
+#   packages/token-broker/Dockerfile                         — broker image
+#   modules/{s2s-platform,s2s-service}/                      — frozen modules (don't touch)
+#
+# Steps:
+#   1. Build SDK + cedar tooling
+#   2. Deploy platform              (examples/_platform → SSM)
+#   3. Build + push 4 container images (broker + 3 services)
+#   4. Deploy each service's terraform root
+#   5. Upload Cedar policies to AVP
+#   6. Bootstrap actor catalog (sha256 of Cognito client_secrets)
+#   7. Wait for ECS steady-state
+#   8. Run vitest e2e suite
+#
+# Usage:
+#   bash deploy-and-test.sh             # full deploy + test
+#   bash deploy-and-test.sh teardown    # destroy in reverse order
+#
+# Required env (with defaults):
+#   AWS_PROFILE  — default: s2s-dev
+#   AWS_REGION   — default: us-east-1
+#   ENVIRONMENT  — default: dev (must match fixtures/dev.tfvars.json :: environment)
+#   TFVARS_FILE  — default: $PLATFORM_ROOT/fixtures/dev.tfvars.json
+#
+# The script uses `tofu` (OpenTofu). Substitute `terraform` if you prefer —
+# the two are CLI-compatible for everything we invoke.
+
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "$0")/../../../.." && pwd)"
-TF_DIR="$ROOT/infrastructure/terraform"
-OUTPUTS="$TF_DIR/tf-outputs.json"
+# --- Paths ----------------------------------------------------------------
 
-# Teardown dispatch (must be first so it short-circuits).
-if [[ "${1:-}" == "teardown" ]]; then
-  cd "$TF_DIR"
-  terraform destroy -auto-approve
-  exit 0
-fi
+# This script lives at examples/chained/e2e/src/scripts/deploy-and-test.sh
+# Repo root is five levels up.
+ROOT="$(cd "$(dirname "$0")/../../../../.." && pwd)"
+
+PLATFORM_ROOT="$ROOT/examples/_platform"
+CHAINED_ROOT="$ROOT/examples/chained"
+SERVICES=(calling-service receiving-service ledger-service)
 
 : "${AWS_PROFILE:=s2s-dev}"
 : "${AWS_REGION:=us-east-1}"
+: "${ENVIRONMENT:=dev}"
+: "${TFVARS_FILE:=$PLATFORM_ROOT/fixtures/dev.tfvars.json}"
 
-# Deterministic image tag passed to Terraform via TF_VAR_image_tag.
-export TF_VAR_image_tag="$(git rev-parse --short HEAD)"
-# Per-run namespace for E2E dedup keys.
+export AWS_PROFILE AWS_REGION
+
+PLATFORM_OUTPUTS="/tmp/s2s-platform-outputs.json"
+TF="${TF:-tofu}"
+
+# --- Teardown -------------------------------------------------------------
+
+if [[ "${1:-}" == "teardown" ]]; then
+  echo "==> Teardown — destroying in reverse order"
+  # Services first (they hold ALB listener rules + target groups + Cognito clients).
+  for svc in "${SERVICES[@]}"; do
+    if [[ -d "$CHAINED_ROOT/$svc/terraform/.terraform" ]]; then
+      echo "  -- destroy $svc"
+      (cd "$CHAINED_ROOT/$svc/terraform" && "$TF" destroy -auto-approve)
+    fi
+  done
+  # Platform last.
+  if [[ -d "$PLATFORM_ROOT/.terraform" ]]; then
+    echo "  -- destroy platform"
+    (cd "$PLATFORM_ROOT" && "$TF" destroy -auto-approve -var-file="$TFVARS_FILE")
+  fi
+  echo
+  echo "Done. NOTE: some platform resources are RETAIN-policy'd and will linger:"
+  echo "  - KMS keys (schedule deletion: aws kms schedule-key-deletion --key-id <id>)"
+  echo "  - Cognito user pool (aws cognito-idp delete-user-pool --user-pool-id <id>)"
+  echo "  - ECR repos with images (aws ecr delete-repository --force ...)"
+  echo "  - CloudWatch log groups (/s2s/platform/*)"
+  echo "  See docs/deploying-the-stack.md#teardown for the full cleanup runbook."
+  exit 0
+fi
+
+# --- Sanity checks --------------------------------------------------------
+
+if [[ ! -f "$TFVARS_FILE" ]]; then
+  echo "ERROR: tfvars file not found: $TFVARS_FILE"
+  echo "       cp $PLATFORM_ROOT/fixtures/dev.tfvars.json.example $TFVARS_FILE"
+  echo "       then edit account_id, vpc_id, subnets, cognito_domain_prefix."
+  exit 1
+fi
+
+command -v "$TF" >/dev/null || { echo "ERROR: $TF not on PATH"; exit 1; }
+command -v aws >/dev/null   || { echo "ERROR: aws CLI not on PATH"; exit 1; }
+command -v docker >/dev/null || { echo "ERROR: docker not on PATH"; exit 1; }
+command -v jq >/dev/null     || { echo "ERROR: jq not on PATH"; exit 1; }
+
+# Deterministic image tag passed to every per-service Terraform root via TF_VAR_image_tag.
+export TF_VAR_image_tag="$(git -C "$ROOT" rev-parse --short HEAD)"
+# Per-run namespace for e2e dedup keys.
 export E2E_RUN_ID="$(uuidgen)"
 
-echo "==> 1/7  Build SDK + services"
-npm --workspace @s2s/auth-library run build
-npm --workspace @s2s/calling-service run build
-npm --workspace @s2s/receiving-service run build
-
-echo "==> 2/7  Terraform apply (infrastructure)"
-cd "$TF_DIR"
-terraform init
-terraform apply -auto-approve
-terraform output -json > "$OUTPUTS"
-cd "$ROOT"
-
-# Parse stack outputs into env vars used by downstream steps.
 ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
 ECR_URI="$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com"
-export AVP_LENDING_POLICY_STORE_ID="$(jq -r '.avp_lending_policy_store_id.value' "$OUTPUTS")"
-# Plan 03's Cedar upload reads AVP_POLICY_STORE_ID; alias the canonical name to it.
-export AVP_POLICY_STORE_ID="$AVP_LENDING_POLICY_STORE_ID"
-export USER_POOL_ID="$(jq -r '.cognito_user_pool_id.value' "$OUTPUTS")"
 
-echo "==> 3/7  Build + push Docker images to ECR (tag=$TF_VAR_image_tag)"
-aws ecr get-login-password --region "$AWS_REGION" | docker login --username AWS --password-stdin "$ECR_URI"
-docker build -f "$ROOT/packages/examples/calling-service/Dockerfile"   -t "$ECR_URI/s2s-calling-service:$TF_VAR_image_tag"   "$ROOT"
-docker build -f "$ROOT/packages/examples/receiving-service/Dockerfile" -t "$ECR_URI/s2s-receiving-service:$TF_VAR_image_tag" "$ROOT"
-docker push "$ECR_URI/s2s-calling-service:$TF_VAR_image_tag"
-docker push "$ECR_URI/s2s-receiving-service:$TF_VAR_image_tag"
+# --- 1. Build SDK + cedar tooling -----------------------------------------
 
-echo "==> 4/7  Terraform apply again (ECS services pick up new image tag)"
-cd "$TF_DIR"
-terraform apply -auto-approve
-terraform output -json > "$OUTPUTS"
-cd "$ROOT"
+echo "==> 1/8  Build SDK + cedar tooling"
+npm --workspace @s2s/auth-library run build
+# Cedar tooling has no compile step (it's tsx-only) — validate as a smoke test.
+npm --workspace @s2s/cedar-policies run validate
 
-# Re-export ALB + queue now that example_services is up.
-export ALB_DNS="$(jq -r '.alb_dns_name.value' "$OUTPUTS")"
-export QUEUE_URL="$(jq -r '.lending_queue_url.value' "$OUTPUTS")"
+# --- 2. Deploy platform ---------------------------------------------------
+
+echo "==> 2/8  Deploy platform ($PLATFORM_ROOT)"
+(
+  cd "$PLATFORM_ROOT"
+  "$TF" init -input=false
+  "$TF" apply -input=false -auto-approve -var-file="$TFVARS_FILE"
+  "$TF" output -json > "$PLATFORM_OUTPUTS"
+)
+
+BROKER_URL="$(jq -r '.broker_url.value' "$PLATFORM_OUTPUTS")"
+ALB_DNS="$(jq -r '.alb_dns_name.value' "$PLATFORM_OUTPUTS")"
+ECS_CLUSTER_NAME="$(jq -r '.ecs_cluster_name.value' "$PLATFORM_OUTPUTS")"
+COGNITO_DOMAIN="$(jq -r '.cognito_domain.value' "$PLATFORM_OUTPUTS")"
+
+export ALB_DNS BROKER_URL COGNITO_DOMAIN
+export TF_OUTPUTS_PATH="$PLATFORM_OUTPUTS"
+
+# --- 3. Build + push container images -------------------------------------
+
+echo "==> 3/8  Build + push container images (tag=$TF_VAR_image_tag)"
+aws ecr get-login-password --region "$AWS_REGION" \
+  | docker login --username AWS --password-stdin "$ECR_URI"
+
+# Broker repo is provisioned by the platform module under a fixed name.
+BROKER_REPO="$ECR_URI/s2s/$ENVIRONMENT/token-broker"
+docker build -f "$ROOT/packages/token-broker/Dockerfile" \
+  -t "$BROKER_REPO:$TF_VAR_image_tag" "$ROOT"
+docker push "$BROKER_REPO:$TF_VAR_image_tag"
+
+# Per-service repos are provisioned by s2s-service (one per service).
+for svc in "${SERVICES[@]}"; do
+  REPO="$ECR_URI/$ENVIRONMENT/$svc"
+  docker build -f "$CHAINED_ROOT/$svc/Dockerfile" \
+    -t "$REPO:$TF_VAR_image_tag" "$ROOT"
+  docker push "$REPO:$TF_VAR_image_tag"
+done
+
+# --- 4. Deploy each service's terraform root ------------------------------
+
+echo "==> 4/8  Deploy services (calling, receiving, ledger)"
+for svc in "${SERVICES[@]}"; do
+  echo "  -- $svc"
+  (
+    cd "$CHAINED_ROOT/$svc/terraform"
+    "$TF" init -input=false
+    "$TF" apply -input=false -auto-approve \
+      -var "account_id=$ACCOUNT_ID" \
+      -var "region=$AWS_REGION" \
+      -var "environment=$ENVIRONMENT"
+  )
+done
+
+# --- 5. Upload Cedar policies --------------------------------------------
 
 echo "==> 5/8  Upload Cedar policies to AVP"
+export AVP_POLICY_STORE_ID="$(jq -r '.policy_store_ids.value.lending' "$PLATFORM_OUTPUTS")"
 npm --workspace @s2s/cedar-policies run upload
 
+# --- 6. Bootstrap actor catalog -------------------------------------------
+
 echo "==> 6/8  Bootstrap actor catalog (sha256 of Cognito client_secrets)"
-# The broker rejects exchange requests until the actor catalog secret contains
-# real client_secret hashes (Terraform writes only placeholders). Compute them
-# from the live Cognito secrets and overwrite the catalog, then force a broker
-# redeploy so it reloads the catalog from Secrets Manager.
+# Each service module writes its Cognito client_secret to a Secrets Manager
+# secret named "<env>-s2s/<service>/cognito/client-secret". The broker reads
+# the actor catalog from a separate secret (ACTOR_CATALOG_SECRET_ARN). The
+# platform module v2.0.2 does NOT yet provision that secret — the operator
+# is expected to create it on first run and re-deploy the broker. We do so
+# here.
 CALLING_SECRET=$(aws secretsmanager get-secret-value \
-  --secret-id "m2m/lending/client-secret" --query SecretString --output text \
-  | jq -r .client_secret)
-RECEIVING_OUTBOUND_SECRET=$(aws secretsmanager get-secret-value \
-  --secret-id "m2m/receiving-outbound/client-secret" --query SecretString --output text \
-  | jq -r .client_secret)
+  --secret-id "$ENVIRONMENT-s2s/calling-service/cognito/client-secret" \
+  --query SecretString --output text)
+RECEIVING_SECRET=$(aws secretsmanager get-secret-value \
+  --secret-id "$ENVIRONMENT-s2s/receiving-service/cognito/client-secret" \
+  --query SecretString --output text)
 
 CALLING_HASH=$(printf "%s" "$CALLING_SECRET" | shasum -a 256 | awk '{print $1}')
-RECEIVING_HASH=$(printf "%s" "$RECEIVING_OUTBOUND_SECRET" | shasum -a 256 | awk '{print $1}')
+RECEIVING_HASH=$(printf "%s" "$RECEIVING_SECRET" | shasum -a 256 | awk '{print $1}')
 
 cat > /tmp/actor-catalog.json <<JSON
 {
   "calling-service": {
     "client_secret_hash": "sha256:${CALLING_HASH}",
-    "allowed_audiences": ["receiving"],
+    "allowed_audiences": ["lending"],
     "allowed_scopes": ["lending/read","lending/write"]
   },
-  "receiving-service-outbound": {
+  "receiving-service": {
     "client_secret_hash": "sha256:${RECEIVING_HASH}",
     "allowed_audiences": ["ledger"],
     "allowed_scopes": ["ledger/read","ledger/write"]
@@ -90,27 +200,43 @@ cat > /tmp/actor-catalog.json <<JSON
 }
 JSON
 
-aws secretsmanager put-secret-value \
-  --secret-id "m2m/token-broker/actor-catalog" \
-  --secret-string file:///tmp/actor-catalog.json
+# Idempotent create-or-update on the catalog secret.
+CATALOG_SECRET_ID="$ENVIRONMENT-s2s/platform/broker/actor-catalog"
+if aws secretsmanager describe-secret --secret-id "$CATALOG_SECRET_ID" >/dev/null 2>&1; then
+  aws secretsmanager put-secret-value \
+    --secret-id "$CATALOG_SECRET_ID" \
+    --secret-string file:///tmp/actor-catalog.json >/dev/null
+else
+  aws secretsmanager create-secret \
+    --name "$CATALOG_SECRET_ID" \
+    --secret-string file:///tmp/actor-catalog.json >/dev/null
+fi
 
-# Restart the broker so it picks up the new catalog. Other services don't
-# need a restart — they call the broker over HTTP, not via secret refs.
+# Force the broker to reload the catalog.
 aws ecs update-service \
-  --cluster "s2s-s2s-poc" \
-  --service token-broker \
+  --cluster "$ECS_CLUSTER_NAME" \
+  --service "$(aws ecs list-services --cluster "$ECS_CLUSTER_NAME" \
+               --query 'serviceArns[?contains(@, `broker`)] | [0]' --output text)" \
   --force-new-deployment >/dev/null
 
+# --- 7. Wait for ECS steady-state -----------------------------------------
+
 echo "==> 7/8  Wait for ECS services to reach steady state"
-CLUSTER="s2s-s2s-poc"
-SERVICE_ARNS="$(aws ecs list-services --cluster "$CLUSTER" --query 'serviceArns[]' --output text)"
-aws ecs wait services-stable --cluster "$CLUSTER" --services $SERVICE_ARNS
+SERVICE_ARNS="$(aws ecs list-services --cluster "$ECS_CLUSTER_NAME" \
+                --query 'serviceArns[]' --output text)"
+# shellcheck disable=SC2086
+aws ecs wait services-stable --cluster "$ECS_CLUSTER_NAME" --services $SERVICE_ARNS
+
+# --- 8. Run e2e suite -----------------------------------------------------
 
 echo "==> 8/8  Run e2e suites (run_id=$E2E_RUN_ID)"
-export TF_OUTPUTS_PATH="$OUTPUTS"
-# Run sync-flow + user-propagation matrices. Both live in @s2s/e2e and are
-# picked up by the default `vitest run` glob — keeping them in a single
-# invocation so vitest can report a unified pass/fail across the matrix.
-npm --workspace @s2s/e2e test
+npm --workspace @s2s/example-chained-e2e test
 
+echo
 echo "All e2e suites passed."
+echo "  Broker URL:       $BROKER_URL"
+echo "  ALB:              $ALB_DNS"
+echo "  Cognito domain:   $COGNITO_DOMAIN"
+echo
+echo "Smoke-test the deployment with the Postman collection in docs/postman/."
+echo "Teardown:  bash $0 teardown"
