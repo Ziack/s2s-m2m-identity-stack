@@ -17,6 +17,36 @@ A single version line covers every artifact in the repo (see §9.1 of the design
 
 (Nothing yet.)
 
+## [2.0.3] — 2026-05-21
+
+Adds the **last missing piece of the turnkey deploy story**: a tiny VPC
+root operators can run in an empty sandbox account before
+`examples/_platform/`. Until this release, the deploy walkthrough assumed
+the operator already had a VPC with private subnets in two AZs — fine in
+real orgs, awkward in fresh PoC accounts.
+
+### Added
+
+- `examples/_bootstrap/` — second Terraform root, parallel to
+  `examples/_platform/`. Creates a minimal VPC (`10.0.0.0/16` by default),
+  two public + two private `/20` subnets across two AZs, IGW, single-AZ
+  NAT, and the matching route tables. Outputs a `next_steps` JSON blob
+  that pastes directly into the platform fixture's `vpc_id` /
+  `private_subnet_ids` / `alb_subnet_ids` fields. Explicitly PoC-grade —
+  single-AZ NAT is a documented SPOF, no flow logs, no VPC endpoints, no
+  multi-AZ HA. Real prod deployments continue to bring their own VPC and
+  skip this root entirely. See `examples/_bootstrap/README.md`.
+
+### Documentation
+
+- `docs/deploying-the-stack.md` — new **Step 0a — Provision a VPC for dev
+  (optional)** section, inserted before the existing platform fixture
+  step. Shows the `tofu output -json next_steps | jq` snippet for handing
+  IDs off to `_platform/`.
+- `examples/_platform/README.md` — added a **Prerequisites** callout near
+  the top pointing at `examples/_bootstrap/` for operators without an
+  existing VPC.
+
 ## [2.0.2] — 2026-05-21
 
 Closes the **deploy-story gap** identified after v2.0.1: until this
