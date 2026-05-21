@@ -234,3 +234,30 @@ resource "aws_secretsmanager_secret_rotation" "receiving_outbound" {
     aws_secretsmanager_secret_version.receiving_outbound_seed,
   ]
 }
+
+# --- User-issuer signing key ------------------------------------------------
+# RSA-2048 private key used by the calling-service local user IdP to sign
+# OIDC-style ID tokens (subject tokens) for the token broker exchange flow.
+# Generated at apply time via the tls provider and stored KMS-encrypted in
+# Secrets Manager. The corresponding public key is derived at runtime by
+# the calling-service IdP for JWKS publication.
+
+resource "tls_private_key" "user_issuer" {
+  algorithm = "RSA"
+  rsa_bits  = 2048
+}
+
+resource "aws_secretsmanager_secret" "user_issuer_signing" {
+  name        = "m2m/calling-user-issuer/signing-key"
+  description = "RSA-2048 private key (PEM PKCS8) for the calling-service local user IdP"
+  kms_key_id  = aws_kms_key.secrets.arn
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
+resource "aws_secretsmanager_secret_version" "user_issuer_signing" {
+  secret_id     = aws_secretsmanager_secret.user_issuer_signing.id
+  secret_string = tls_private_key.user_issuer.private_key_pem
+}

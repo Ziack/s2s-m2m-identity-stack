@@ -22,3 +22,8 @@ output "receiving_outbound_secret_arn" {
 output "rotation_lambda_arn" {
   value = aws_lambda_function.rotation.arn
 }
+
+output "user_issuer_signing_secret_arn" {
+  description = "Secrets Manager ARN holding the calling-service user-issuer RSA private key (PEM)"
+  value       = aws_secretsmanager_secret.user_issuer_signing.arn
+}
