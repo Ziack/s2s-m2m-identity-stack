@@ -10,6 +10,7 @@ export interface Metrics {
   nonceReplayTotal: Counter<'client_id'>;
   authFailureTotal: Counter<'step' | 'error_code'>;
   circuitState: Gauge<'component' | 'state'>;
+  m2mShadowModeDecisionsTotal: Counter<'decision' | 'result'>;
 }
 
 function build(): Metrics {
@@ -66,6 +67,12 @@ function build(): Metrics {
     labelNames: ['component', 'state'],
     registers: [registry],
   });
+  const m2mShadowModeDecisionsTotal = new Counter({
+    name: 'm2m_shadow_mode_decisions_total',
+    help: 'Total broker-auth middleware decisions emitted while in shadow (log-only) mode',
+    labelNames: ['decision', 'result'] as const,
+    registers: [registry],
+  });
   return {
     registry,
     tokenAcquireDuration,
@@ -76,6 +83,7 @@ function build(): Metrics {
     nonceReplayTotal,
     authFailureTotal,
     circuitState,
+    m2mShadowModeDecisionsTotal,
   };
 }
 
