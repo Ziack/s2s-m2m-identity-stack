@@ -175,6 +175,62 @@ Each apply:
 - Uploads any service-owned Cedar policies into the bounded-context's AVP
   policy store
 
+## 6a. Enabling VPC Lattice (optional)
+
+By default (`enable_lattice = false`) service-to-service traffic flows over the
+ALB exactly as in v2.0.x — **skip this section** unless you want the Lattice +
+SigV4 data plane. See
+[architecture.md](./architecture.md#vpc-lattice-service-to-service-opt-in) for
+the design.
+
+**1. Turn it on at the platform.** Set `enable_lattice = true` in the platform
+tfvars and re-apply:
+
+```bash
+cd examples/_platform
+# add  "enable_lattice": true  to fixtures/dev.tfvars.json
+tofu apply -var-file=fixtures/dev.tfvars.json
+```
+
+This creates the Lattice service network + the broker Lattice service and
+publishes `lattice_service_network_id` and `broker_lattice_dns` to SSM under
+`/<env>/s2s/platform/*`.
+
+**2. Apply the service roots in dependency order: `ledger → receiving →
+calling`.** Unlike the default flow (where service roots are order-independent),
+Lattice mode makes callers read their callee's published Lattice DNS from SSM at
+plan time, so the callee root must be applied first:
+
+```bash
+for svc in ledger-service receiving-service calling-service; do
+  cd "$(git rev-parse --show-toplevel)/examples/chained/$svc/terraform"
+  tofu apply -auto-approve \
+    -var "account_id=$ACCOUNT_ID" -var "region=$AWS_REGION" \
+    -var "environment=$ENVIRONMENT" -var "image_tag=$TAG" \
+    -var "enable_lattice=true"
+done
+```
+
+Each service root, when `enable_lattice=true`:
+
+- registers the service with the Lattice service network and publishes its own
+  `/<env>/s2s/services/<svc>/lattice_dns` to SSM (ledger + receiving),
+- threads `USE_LATTICE=true` plus the **callee's** `*_LATTICE_DNS` into the task
+  env automatically (auto-threaded by TF — you don't set these by hand),
+- grants the task role `vpc-lattice-svcs:Invoke` for its outbound audiences.
+
+**3. Control plane stays on the ALB.** Note that `BROKER_TOKEN_ENDPOINT` (the
+broker's ALB URL) is used for the RFC 8693 token-exchange in **both** modes —
+the broker exchange authenticates with `client_secret_basic` on `Authorization`,
+which SigV4 cannot share. Only the service→service hops move onto Lattice. There
+is no `BROKER_LATTICE_DNS` task env; the broker is never called over Lattice.
+
+**4. IAM note.** The caller's task role must hold `vpc-lattice-svcs:Invoke` on
+the callee's Lattice service ARN (the s2s-service module grants this from
+`outbound_audiences` when registered). The callee's Lattice **auth policy** (also
+managed by the module) enforces the same on the receive side, so a missing IAM
+grant fails closed at the network layer before the app ever sees the request.
+
 ## 7. Bootstrap the actor catalog
 
 The broker rejects token-exchange requests until its actor-catalog secret

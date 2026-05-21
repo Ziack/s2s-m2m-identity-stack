@@ -46,11 +46,20 @@ User → calling-service (lending/write)
 ### VPC Lattice mode (optional)
 
 When the platform is deployed with `enable_lattice = true`, set `-var=enable_lattice=true`
-on each chained root to switch the inter-service hops from ALB + plain HTTP to VPC
+on each chained root to switch the **service→service** hops from ALB + plain HTTP to VPC
 Lattice + SigV4. In Lattice mode each service publishes its own Lattice DNS to SSM
-(`/${env}/s2s/services/<service>/lattice_dns`) and callers consume their callee's DNS,
-plus the platform's `broker_lattice_dns`, as task env (`USE_LATTICE`, `*_LATTICE_DNS`,
-`BROKER_LATTICE_DNS`).
+(`/${env}/s2s/services/<service>/lattice_dns`) and callers consume their callee's DNS as
+task env (`USE_LATTICE`, `*_LATTICE_DNS`).
+
+**Control plane stays on the ALB.** Only the data-plane service→service hops
+(calling→receiving, receiving→ledger) move onto Lattice. The broker
+token-exchange (RFC 8693) always uses `BROKER_TOKEN_ENDPOINT` (the broker's ALB
+URL) with `client_secret_basic` in **both** modes — SigV4 owns the
+`Authorization` header and cannot share it with the actor's Basic credential. The
+broker is never called over Lattice, so there is **no** `BROKER_LATTICE_DNS` task
+env. (The platform still publishes `broker_lattice_dns` to SSM; each chained root
+passes it into the `s2s-service` module's `platform` object for service
+registration, but it is not threaded into the app.)
 
 **Apply order matters in Lattice mode** because a caller reads its callee's published
 `lattice_dns` from SSM. Apply callees before callers:

@@ -17,6 +17,67 @@ A single version line covers every artifact in the repo (see §9.1 of the design
 
 (Nothing yet.)
 
+## [2.1.0] — 2026-05-21
+
+Adds **VPC Lattice** as an opt-in service-to-service transport. When
+`enable_lattice = true`, the service→service ("data plane") network hops move
+from the ALB to VPC Lattice authenticated with **SigV4 IAM**, while the broker
+token-exchange ("control plane") stays on the ALB with `client_secret_basic`.
+This is a **minor** release: the feature is additive and gated, defaulting OFF,
+so existing deployments are byte-for-byte unchanged. Also repairs the three
+chained-service Dockerfiles that have referenced deleted paths since v2.0.0.
+
+### Added
+
+- **VPC Lattice service-to-service transport** (`enable_lattice`, default
+  `false`). `modules/s2s-platform` provisions the Lattice service network + the
+  broker Lattice service and publishes `lattice_service_network_id` /
+  `broker_lattice_dns` to SSM. `modules/s2s-service` registers each service with
+  the network (Lattice service + target group + listener + auth policy), exposes
+  `lattice_service_dns` / `lattice_service_arn` outputs, and grants the task role
+  `vpc-lattice-svcs:Invoke` for its `outbound_audiences`.
+- `@s2s/auth-library` `createLatticeFetch` — a SigV4-signing `fetch`-shaped
+  client for the Lattice data plane, plus the `DPOP_TOKEN_HEADER`
+  (`X-DPoP-Token`) constant.
+- `X-DPoP-Token` header support in the broker-aware middleware, so a DPoP-bound
+  access token can travel alongside a SigV4 `Authorization` header.
+- Chained example terraform: per-service Lattice DNS publish/consume via SSM and
+  `USE_LATTICE` / `*_LATTICE_DNS` task-env auto-threading when
+  `enable_lattice = true`.
+
+### Fixed
+
+- Three chained-service Dockerfiles (`examples/chained/{calling,receiving,ledger}-service/Dockerfile`)
+  referenced deleted `packages/examples/*` paths — broken since the v2.0.0
+  example reorg, which silently broke **all three** service image builds. They
+  now point at `examples/chained/*`.
+
+### Changed
+
+- The broker-aware middleware reads the DPoP-bound access token from
+  `X-DPoP-Token` **first**, falling back to `Authorization: DPoP <token>`. Fully
+  backward-compatible — the ALB path is unchanged.
+
+### Architecture
+
+- **Control-plane / data-plane split.** SigV4 and the actor's
+  `client_secret_basic` both claim the `Authorization` header and cannot share a
+  request, so the broker token-exchange (control plane) stays on the broker ALB
+  with `client_secret_basic` in **both** Lattice and non-Lattice modes; only the
+  service→service hops (data plane) ride Lattice + SigV4. Under Lattice the
+  header model is: SigV4 → `Authorization`, DPoP access token → `X-DPoP-Token`,
+  DPoP proof → `DPoP`. See
+  [docs/architecture.md](./docs/architecture.md#vpc-lattice-service-to-service-opt-in).
+
+### Migration
+
+- `enable_lattice` defaults to `false`, so **no change is required** for existing
+  deployments — the v2.0.4 ALB behavior is preserved exactly. To opt in, follow
+  the "Enabling VPC Lattice" subsection of
+  [docs/deploying-the-stack.md](./docs/deploying-the-stack.md). Note the
+  Lattice-mode apply order is **ledger → receiving → calling** (callers read
+  callees' published Lattice DNS from SSM at plan time).
+
 ## [2.0.4] — 2026-05-21
 
 Closes a **five-bug env-var contract gap** between

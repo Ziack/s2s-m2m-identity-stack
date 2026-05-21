@@ -66,6 +66,73 @@ The `user` and `actor_chain` context fields make per-user authorization
 decisions possible at every hop of a multi-service call, without requiring
 the end user's bearer token to traverse the whole chain.
 
+## VPC Lattice service-to-service (opt-in)
+
+Since v2.1.0 the service-to-service network hop can run over **AWS VPC Lattice**
+with **SigV4 IAM** authentication instead of the ALB. This is gated by
+`enable_lattice` (platform + per-service input, **default `false`**). When off,
+behavior is byte-for-byte identical to v2.0.x — everything below is inert.
+
+### Control plane vs. data plane
+
+The key design constraint: SigV4 signs the HTTP `Authorization` header, and the
+broker's token-exchange call authenticates the actor with `client_secret_basic`
+which **also** lives on `Authorization`. The two cannot share one request. So
+the transport is split:
+
+| Plane | Hop | Transport | Auth on `Authorization` |
+|-------|-----|-----------|--------------------------|
+| **Control plane** | service → **broker** token-exchange (RFC 8693) | **ALB** (`BROKER_TOKEN_ENDPOINT`) | `client_secret_basic` (`Basic …`) |
+| **Data plane** | service → service (calling→receiving, receiving→ledger) | **VPC Lattice + SigV4** | SigV4 (`AWS4-HMAC-SHA256 …`) |
+
+The broker exchange stays on the ALB with `client_secret_basic` in **both**
+Lattice and non-Lattice modes. Only the service→service data-plane hops move onto
+Lattice when `USE_LATTICE=true`.
+
+### Header model (data plane, Lattice mode)
+
+Because SigV4 owns `Authorization`, the DPoP-bound access token is relocated:
+
+| Header | Carries | Notes |
+|--------|---------|-------|
+| `Authorization` | SigV4 signature | network-layer IAM auth (`vpc-lattice-svcs:Invoke`) |
+| `X-DPoP-Token` | DPoP-bound access token | the broker-issued token (was `Authorization: DPoP …` on the ALB path) |
+| `DPoP` | DPoP proof JWT | `htu` binds to the **Lattice DNS** URL of the callee |
+
+The receiving middleware reads the access token from `X-DPoP-Token` first and
+falls back to `Authorization: DPoP …`, so it accepts both transports.
+
+### Request flow under Lattice
+
+```mermaid
+sequenceDiagram
+  participant A as calling-service
+  participant ALB as Broker ALB
+  participant B as Token Broker
+  participant L as VPC Lattice<br/>(service network)
+  participant C as receiving-service
+  Note over A: control plane — stays on ALB
+  A->>ALB: POST /oauth2/token (RFC 8693)<br/>Authorization: Basic <actor client_secret_basic><br/>DPoP proof (htu = broker ALB)
+  ALB->>B: forward
+  B-->>A: access_token (audience=receiving, cnf=jkt)
+  Note over A,C: data plane — over Lattice + SigV4
+  A->>L: POST /api/...<br/>Authorization: SigV4 (vpc-lattice-svcs:Invoke)<br/>X-DPoP-Token: <access_token><br/>DPoP proof (htu = receiving Lattice DNS)
+  L->>C: deliver (IAM auth-policy enforced)
+  C->>C: read X-DPoP-Token; verify DPoP vs cnf.jkt; AVP authorize
+  C-->>A: 200 OK
+```
+
+If receiving-service then calls ledger-service it repeats the same pattern: a
+control-plane exchange on the broker ALB, then a data-plane SigV4 hop to the
+ledger Lattice DNS.
+
+### Enabling
+
+See [deploying-the-stack.md](./deploying-the-stack.md#enabling-vpc-lattice).
+Callers discover callees' published Lattice DNS via SSM, so the apply order is
+**ledger → receiving → calling**. The task role needs `vpc-lattice-svcs:Invoke`
+(granted by the s2s-service module when registered).
+
 ## Hardening
 
 The s2s-service module enforces the secure task shape with no override
