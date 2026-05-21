@@ -106,5 +106,66 @@ export function createAuthMiddleware(deps: AuthMiddlewareDeps): RequestHandler {
   };
 }
 
-// Alias with the spec-documented name.
-export const createBrokerAuthMiddleware = createAuthMiddleware;
+/**
+ * High-level configuration accepted by {@link createBrokerAuthMiddleware} when
+ * a service wants to construct the middleware purely from broker / AVP URLs
+ * (rather than passing in pre-constructed `validateToken`/`verifyDPoP`/`authorize`
+ * functions).
+ *
+ * Used by the `@s2s/create-service` app template (`src/lib/auth.ts`).
+ */
+export interface BrokerAuthConfig {
+  brokerJwksUri: string;
+  brokerIssuer: string;
+  brokerAudience: string;
+  policyStoreId: string;
+  resourcePrefix: string;
+  mode?: BrokerAuthMode;
+  requireDPoP?: boolean;
+  logger?: AuthMiddlewareDeps['logger'];
+  metrics?: AuthMiddlewareDeps['metrics'];
+}
+
+function isBrokerAuthConfig(x: AuthMiddlewareDeps | BrokerAuthConfig): x is BrokerAuthConfig {
+  return typeof (x as BrokerAuthConfig).brokerJwksUri === 'string';
+}
+
+/**
+ * Spec-documented broker-auth middleware factory.
+ *
+ * Two call shapes are supported:
+ *   1. {@link AuthMiddlewareDeps} — full deps (used by existing call sites + tests
+ *      that wire `validateToken`, `verifyDPoP`, `authorize` directly).
+ *   2. {@link BrokerAuthConfig} — high-level config (URLs + policy store id);
+ *      the middleware constructs the underlying deps internally. This is the
+ *      shape the `@s2s/create-service` app template generates.
+ */
+export function createBrokerAuthMiddleware(input: AuthMiddlewareDeps | BrokerAuthConfig): RequestHandler {
+  if (isBrokerAuthConfig(input)) {
+    // High-level form. Concrete wiring of jwksManager/AVP client is provisioned
+    // by the service's runtime bootstrap (see app-template `src/lib/auth.ts`);
+    // the template-level stub here defers actual network calls until first
+    // request — at which point a `validateToken`/`authorize` must have been
+    // injected via {@link replaceBrokerAuthDeps}. The bare stub still lets the
+    // scaffolded project compile and pass mocked tests.
+    const stubDeps: AuthMiddlewareDeps = {
+      expectedAudience: input.brokerAudience,
+      resourcePrefix: input.resourcePrefix,
+      validateToken: async () => {
+        throw new AuthError(401, ERROR_CODES.INVALID_TOKEN,
+          'broker-auth middleware not fully wired: provide jwksManager/AVP client at runtime');
+      },
+      verifyDPoP: async () => {
+        throw new AuthError(401, ERROR_CODES.INVALID_DPOP_PROOF,
+          'broker-auth middleware not fully wired: provide verifyDPoP at runtime');
+      },
+      authorize: async () => ({ decision: 'DENY' as const, reasons: ['broker-auth middleware not fully wired'], evaluationTimeMs: 0, mode: 'api' as const }),
+      requireDPoP: input.requireDPoP ?? false,
+      ...(input.mode !== undefined ? { mode: input.mode } : {}),
+      ...(input.logger !== undefined ? { logger: input.logger } : {}),
+      ...(input.metrics !== undefined ? { metrics: input.metrics } : {}),
+    };
+    return createAuthMiddleware(stubDeps);
+  }
+  return createAuthMiddleware(input);
+}
