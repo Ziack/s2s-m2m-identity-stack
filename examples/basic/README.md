@@ -1,14 +1,7 @@
-# Basic example
+# Basic example — `hello-loans`
 
-Single-service smoke example. Looks up the platform via SSM and deploys one service called `loan-origination` in the `lending` bounded context.
+A single Express service returning `{ok: true}` on `/api/hello`. Demonstrates the minimum surface area needed to deploy through the `s2s-service` module: one Cognito client, one ECR repo, one Cedar policy, one ALB listener rule.
 
-## Usage
+See `./hello-loans/terraform/main.tf` for the module call.
 
-```bash
-cd examples/basic
-terraform init
-terraform validate
-terraform plan -var-file=fixtures/example.tfvars
-```
-
-Assumes the platform module is already deployed and SSM parameters are populated.
+> The loose `examples/basic/{main.tf,variables.tf,outputs.tf,versions.tf,fixtures/}` files at this level are a Plan 1 smoke harness used to validate `modules/s2s-service` in isolation. They remain in place for module-level CI validation; new example application code lives under `hello-loans/`.
