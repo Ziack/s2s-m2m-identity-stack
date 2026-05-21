@@ -1,0 +1,5 @@
+{
+  "name": "orders",
+  "bounded_context": "orders",
+  "version": "<v1.0 pinned version>"
+}
