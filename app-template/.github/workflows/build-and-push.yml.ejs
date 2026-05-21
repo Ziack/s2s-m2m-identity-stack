@@ -1,0 +1,44 @@
+name: build-and-push
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        if: github.ref == 'refs/heads/main'
+        with:
+          role-to-assume: ${{ secrets.AWS_OIDC_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Login to ECR
+        if: github.ref == 'refs/heads/main'
+        id: ecr
+        run: |
+          set -euo pipefail
+          REPO_URI=$(cd terraform && terraform output -raw ecr_repository_uri)
+          echo "repo_uri=$REPO_URI" >> "$GITHUB_OUTPUT"
+          aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin "$REPO_URI"
+
+      - name: Build + push image
+        if: github.ref == 'refs/heads/main'
+        run: |
+          set -euo pipefail
+          docker build -t "${{ steps.ecr.outputs.repo_uri }}:${{ github.sha }}" .
+          docker push     "${{ steps.ecr.outputs.repo_uri }}:${{ github.sha }}"
