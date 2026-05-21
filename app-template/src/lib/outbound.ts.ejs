@@ -1,0 +1,17 @@
+<% if (hasOutbound) { %>
+import { createExchangeToken, getClientSecret } from '@s2s/auth-library';
+import { config } from '../config.js';
+
+<% outboundAudiences.forEach((aud) => { %>
+export const exchangeFor_<%= aud.replace(/-/g, '_') %> = createExchangeToken({
+  brokerUrl: config.BROKER_TOKEN_ENDPOINT,
+  actorClientId: config.COGNITO_CLIENT_ID,
+  actorClientSecret: () => getClientSecret(config.COGNITO_CLIENT_SECRET_ARN, { region: config.AWS_REGION }),
+  audience: '<%= aud %>',
+  scope: ['<%= aud %>/write'],
+});
+<% }); %>
+<% } else { %>
+// This service declared no outbound audiences. Re-scaffold or extend manually if needed.
+export {};
+<% } %>
