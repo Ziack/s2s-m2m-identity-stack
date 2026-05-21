@@ -1,0 +1,41 @@
+variable "region" {
+  type        = string
+  description = "AWS region (must match platform)"
+  default     = "us-east-1"
+}
+
+variable "environment" {
+  type        = string
+  description = "Platform environment (dev|staging|prod) — used to look up SSM parameters"
+  default     = "<%= environment %>"
+}
+
+variable "image_tag" {
+  type        = string
+  description = "Container image tag built and pushed by CI"
+}
+
+variable "alb_listener_rule_priority" {
+  type        = number
+  description = "Globally unique priority within the platform ALB listener"
+}
+
+variable "desired_count" {
+  type    = number
+  default = 2
+}
+
+variable "cpu" {
+  type    = number
+  default = 256
+}
+
+variable "memory" {
+  type    = number
+  default = 512
+}
+
+variable "log_level" {
+  type    = string
+  default = "info"
+}
