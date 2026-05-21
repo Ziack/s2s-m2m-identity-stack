@@ -2,6 +2,7 @@ export const VERSION = '0.1.0';
 
 export { initKeyPair, getPublicJwk, getJwkThumbprint, rotateKey, getActiveKeys, shouldRotate } from './dpop/keyManager.js';
 export { signDPoP } from './dpop/signDPoP.js';
+export { withDPoPNonceRetry, type NonceAwareFn } from './dpop/withDPoPNonceRetry.js';
 export { createVerifyDPoP } from './dpop/verifyDPoP.js';
 export { generateDPoPNonce, createRedisNonceStore } from './dpop/dpopNonce.js';
 export { createAcquireToken } from './token/acquireToken.js';
