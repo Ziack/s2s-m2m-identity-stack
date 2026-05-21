@@ -27,6 +27,10 @@ resource "aws_acm_certificate" "alb" {
   private_key      = tls_private_key.alb.private_key_pem
   certificate_body = tls_self_signed_cert.alb.cert_pem
   tags             = local.common_tags
+
+  lifecycle {
+    create_before_destroy = true
+  }
 }
 
 resource "aws_lb_listener" "this" {
