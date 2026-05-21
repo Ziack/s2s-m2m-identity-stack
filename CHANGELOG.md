@@ -17,6 +17,95 @@ A single version line covers every artifact in the repo (see §9.1 of the design
 
 (Nothing yet.)
 
+## [2.0.4] — 2026-05-21
+
+Closes a **five-bug env-var contract gap** between
+`modules/s2s-platform/broker.tf` and the token-broker container code
+that has been silently breaking every deploy from v2.0.0 onward — the
+broker has never actually started successfully on a fresh apply. Also
+provisions the broker's actor-catalog secret with Terraform (no longer
+manual bootstrap) and adds the missing boot test that ties the TF
+env-var contract to the broker's `loadConfig()`, so this class of bug
+fails CI from now on.
+
+### Fixed
+
+- `modules/s2s-platform/broker.tf` — wire `BROKER_ISSUER_URL` as a
+  container env var. `packages/token-broker/src/config.ts:47` does
+  `requireEnv('BROKER_ISSUER_URL')` and was crashing on boot.
+- `modules/s2s-platform/broker.tf` — pass
+  `BROKER_SIGNING_KEY_SECRET_ARN` as an **env var** (the ARN string),
+  not via ECS `secrets[]` injection of the secret **value**. The broker
+  fetches its own signing-key secret via `signingKeyLoader` /
+  `getClientSecret(arn)` so in-process caching and TTL-driven rotation
+  work; ECS-injected secret values defeat both.
+- `modules/s2s-platform/broker.tf` — health check path is `/health`
+  (was `/healthz`). The broker only serves `/health` (and
+  `/health/auth`). Fixed in both the container `healthCheck.command`
+  and the target group's `health_check.path`.
+- `modules/s2s-platform/broker.tf` — pin `PORT=8080` via env var so
+  the broker's listener matches the task-definition `portMappings.containerPort`.
+  `config.ts:55` defaulted `PORT` to 3000 when unset, leaving the ALB
+  target unreachable.
+- `modules/s2s-platform/broker.tf` — set `ACTOR_CATALOG_SECRET_ARN`.
+  `config.ts:51` throws on boot if neither `ACTOR_CATALOG_PATH` nor
+  `ACTOR_CATALOG_SECRET_ARN` is set.
+
+### Added
+
+- `modules/s2s-platform/secrets.tf` — provision the actor-catalog
+  Secrets Manager secret as a TF resource (`broker_actor_catalog`)
+  with an empty `{}` placeholder body and
+  `lifecycle.ignore_changes = [secret_string]` so the orchestrator's
+  manual updates to the body don't fight TF. The broker boots
+  successfully on first apply and only starts accepting token-exchange
+  requests after the orchestrator's step 6 populates real hashes.
+- `modules/s2s-platform/outputs.tf` + `ssm.tf` —
+  `actor_catalog_secret_arn` output, mirrored to
+  `/<env>/s2s/platform/actor_catalog_secret_arn` per the existing
+  convention.
+- `modules/s2s-platform/broker.tf` — broker task role's
+  `GetSecretValue` policy now also covers the actor-catalog secret ARN.
+- `packages/token-broker/src/index.ts` — export `buildApp(config)`
+  extracted from `main()` so the new boot test can build the Express
+  app without binding a port. The `import.meta.url`-vs-`argv[1]` guard
+  preserves direct-execution behavior for `node dist/index.js`.
+- `packages/token-broker/test/boot.integration.test.ts` — new vitest
+  test that drives the broker through a fixture mirroring broker.tf's
+  `environment[]` array, asserts `loadConfig()` returns a valid
+  config, and exercises `/health` end-to-end via supertest. Any future
+  TF env-var change that breaks the contract now fails CI. Broker test
+  count: 25 → 28; workspace total: 389 → 392.
+
+### Changed
+
+- `examples/chained/e2e/src/scripts/deploy-and-test.sh` — step 6 now
+  uses `aws secretsmanager put-secret-value` unconditionally (the
+  secret is guaranteed to exist via TF). The describe-then-create-or-
+  update dance is gone.
+
+### Documentation
+
+- `docs/deploying-the-stack.md` §7 — clarifies that the catalog secret
+  is provisioned by Terraform; the operator just overwrites the body.
+- `modules/s2s-platform/README.md` — `actor_catalog_secret_arn` row
+  added to the outputs table.
+
+### Migration
+
+Anyone on v2.0.0 – v2.0.3 must apply v2.0.4. **The broker has never
+actually booted on those versions** (bugs 1, 2, and 5 each kill the
+process before `app.listen()`). Re-applying the v2.0.4 platform module
+will update the broker task definition, create the new
+`broker_actor_catalog` secret, and force a new broker deployment with
+the corrected task definition. After the platform apply, re-run the
+orchestrator (or your equivalent of step 6) to populate the catalog
+body, then force a broker redeploy to load the new catalog.
+
+Only fresh deployments are affected — no production caller has ever
+held a broker-minted token on v2.0.0–v2.0.3 because the broker never
+booted. No data migration is required.
+
 ## [2.0.3] — 2026-05-21
 
 Adds the **last missing piece of the turnkey deploy story**: a tiny VPC
