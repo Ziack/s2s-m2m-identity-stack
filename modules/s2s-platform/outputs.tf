@@ -22,6 +22,17 @@ output "broker_jwks_uri" { value = "${local.broker_base_url}/.well-known/jwks.js
 output "broker_issuer" { value = local.broker_base_url }
 output "actor_catalog_secret_arn" { value = aws_secretsmanager_secret.broker_actor_catalog.arn }
 
+# Lattice plane (null/empty when enable_lattice = false)
+output "lattice_service_network_id" {
+  value = var.enable_lattice ? aws_vpclattice_service_network.this[0].id : null
+}
+output "lattice_service_network_arn" {
+  value = var.enable_lattice ? aws_vpclattice_service_network.this[0].arn : null
+}
+output "broker_lattice_dns" {
+  value = var.enable_lattice ? aws_vpclattice_service.broker[0].dns_entry[0].domain_name : null
+}
+
 # Infra plane
 output "kms_secrets_key_arn" { value = aws_kms_key.secrets.arn }
 output "redis_endpoint" { value = aws_elasticache_serverless_cache.this.endpoint[0].address }
@@ -58,6 +69,9 @@ output "platform" {
     ecs_cluster_name           = aws_ecs_cluster.this.name
     vpc_id                     = var.vpc_id
     private_subnet_ids         = var.private_subnet_ids
+    enable_lattice             = var.enable_lattice
+    lattice_service_network_id = var.enable_lattice ? aws_vpclattice_service_network.this[0].id : null
+    broker_lattice_dns         = var.enable_lattice ? aws_vpclattice_service.broker[0].dns_entry[0].domain_name : null
     sidecars                   = local.platform_sidecars
     sidecar_iam_statements     = local.platform_sidecar_iam_statements
     sidecar_volumes            = local.platform_sidecar_volumes

@@ -23,6 +23,14 @@ locals {
     vpc_id                     = var.vpc_id
   }
 
+  # Lattice scalars are only published when enable_lattice = true. Consumers
+  # detect the disabled state by the absence of these parameters.
+  ssm_lattice_scalars = var.enable_lattice ? {
+    lattice_service_network_id  = aws_vpclattice_service_network.this[0].id
+    lattice_service_network_arn = aws_vpclattice_service_network.this[0].arn
+    broker_lattice_dns          = aws_vpclattice_service.broker[0].dns_entry[0].domain_name
+  } : {}
+
   ssm_json_maps = {
     resource_server_identifiers = jsonencode({ for c in var.bounded_contexts : c => aws_cognito_resource_server.contexts[c].identifier })
     policy_store_ids            = jsonencode({ for c in var.bounded_contexts : c => aws_verifiedpermissions_policy_store.contexts[c].id })
@@ -32,6 +40,14 @@ locals {
 
 resource "aws_ssm_parameter" "scalars" {
   for_each = local.ssm_scalars
+  name     = "${local.ssm_prefix}/${each.key}"
+  type     = "String"
+  value    = each.value
+  tags     = local.common_tags
+}
+
+resource "aws_ssm_parameter" "lattice_scalars" {
+  for_each = local.ssm_lattice_scalars
   name     = "${local.ssm_prefix}/${each.key}"
   type     = "String"
   value    = each.value
