@@ -1,5 +1,5 @@
 locals {
-  repo_names = ["s2s-calling-service", "s2s-receiving-service", "s2s-ledger-service"]
+  repo_names = ["s2s-calling-service", "s2s-receiving-service", "s2s-ledger-service", "s2s-token-broker"]
 }
 
 resource "aws_ecr_repository" "this" {

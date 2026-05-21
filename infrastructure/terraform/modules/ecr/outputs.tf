@@ -21,3 +21,11 @@ output "ledger_repo_uri" {
 output "ledger_repo_arn" {
   value = aws_ecr_repository.this["s2s-ledger-service"].arn
 }
+
+output "broker_repo_uri" {
+  value = aws_ecr_repository.this["s2s-token-broker"].repository_url
+}
+
+output "broker_repo_arn" {
+  value = aws_ecr_repository.this["s2s-token-broker"].arn
+}
