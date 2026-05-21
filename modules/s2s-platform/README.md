@@ -36,8 +36,46 @@ Do NOT use this module for per-service config — that belongs in `s2s-service`.
 | `broker_signing_key_rotation_days` | number | no | `90` | Rotation cadence |
 | `broker_log_retention_days` | number | no | `30` | CloudWatch retention for broker logs |
 | `cognito_domain_prefix` | string | yes | — | **Globally unique** Cognito hosted domain |
-| `enable_lattice` | bool | no | `false` | Reserved for v2.x |
+| `enable_lattice` | bool | no | `false` | Provision the VPC Lattice service-to-service plane (service network + broker Lattice service). See [VPC Lattice](#vpc-lattice-service-to-service). |
 | `tags` | map(string) | no | `{}` | Tags merged onto every resource |
+
+## VPC Lattice service-to-service
+
+Set `enable_lattice = true` to provision a VPC Lattice transport for internal,
+SigV4-authenticated service-to-service calls. This is the receiving side of the
+SDK's `createLatticeFetch` client (shipped in Phase 1).
+
+- **`false` (default):** none of the Lattice resources are created. The broker is
+  reachable only via the internal ALB — exact v2.0.x behavior.
+- **`true`:** the broker is reachable over **both** the ALB (direct/debug access)
+  **and** a VPC Lattice service with `AWS_IAM` auth (the SigV4-authenticated S2S
+  path). The ALB remains the user-facing ingress; Lattice handles internal hops.
+
+When enabled, the platform provisions:
+
+- An `aws_vpclattice_service_network` (`${env}-s2s-net`, `auth_type = AWS_IAM`),
+  associated with the workload VPC using the workload security group so tasks can
+  resolve and reach Lattice service DNS.
+- Access logging: a KMS-encrypted (platform CMK), public-access-blocked S3 bucket
+  (`prevent_destroy`) + a CloudWatch log group `/aws/vpclattice/${env}-s2s`, with
+  both an S3 and a CloudWatch access-log subscription on the service network.
+- The **broker's** Lattice service (`${env}-s2s-broker`, `AWS_IAM`): an `IP` target
+  group (HTTP:8080, health check `/health`), an HTTP:80 listener that forwards to
+  it (Lattice terminates TLS; the broker speaks plain HTTP), an auth policy, and
+  the service-network association.
+- The broker ECS service is registered with the Lattice target group via the
+  `vpc_lattice_configurations` block (ECS manages IP (de)registration of Fargate
+  tasks via a dedicated `vpc-lattice:*Targets` role).
+
+**Auth model.** The service network and broker service use `AWS_IAM` auth: every
+call must be SigV4-signed (`vpc-lattice-svcs:Invoke`). The broker's auth policy
+currently **allows any principal within this AWS account** (`aws:PrincipalAccount`
+condition). The tightening path (Phase 3) is to replace that account-wide allow
+with explicit `Principal` ARNs for the per-service calling/receiving task roles —
+those ARNs are created by `s2s-service` and don't exist at platform-apply time.
+
+Ownership: the platform owns the service network and the broker's Lattice service.
+Each app service's own Lattice service is owned by `s2s-service`.
 
 ## On-premise / hybrid callers
 
@@ -66,6 +104,8 @@ Reference implementation: see git tag `v1.0.0` for the pre-modularization versio
 | `kms_secrets_key_arn` | CMK for service secrets |
 | `redis_endpoint` / `redis_port` | Valkey cache endpoint |
 | `alb_listener_arn` / `alb_dns_name` / `alb_security_group_id` / `workload_security_group_id` | Network plane |
+| `lattice_service_network_id` / `lattice_service_network_arn` | VPC Lattice service network identifiers. `null` when `enable_lattice = false`. |
+| `broker_lattice_dns` | Broker Lattice service DNS name (`dns_entry[0].domain_name`) — the SigV4 S2S endpoint for the broker. `null` when `enable_lattice = false`. |
 | `ecs_cluster_arn` / `ecs_cluster_name` | Cluster |
 | `platform` | Composite object — consume as the single input to `s2s-service` |
 
