@@ -227,7 +227,12 @@ curl https://$(terraform output -raw service_url)/health
 
 ## Anti-patterns
 
-_To be filled in subsequent task._
+- **One PR for all phases.** Why it bites: a single revert undoes the whole migration; reviewers can't reason about discrete risks; rollback under incident pressure is chaos.
+- **No shadow mode.** Why it bites: the first cutover doubles as the first observation of real traffic — denial-rate surprises become user-facing outages.
+- **Migrating outbound calls before the downstream is on S2S.** Why it bites: the exchange flow has no audience to talk to; you ship dead code and have to revisit later.
+- **Keeping the old Dockerfile.** Why it bites: the platform module assumes uid 1000, read-only FS, `/health`, `/metrics`, SIGTERM handling — without them, the task fails ALB health checks or refuses to drain on deploy.
+- **Day-1 Cedar policies without traffic.** Why it bites: policies authored in a vacuum reject legitimate calls; without shadow-mode logs to ground-truth them, you'll discover gaps in production.
+- **Skipping the inventory.** Why it bites: every Phase decision (which IdP, which bounded context, which downstreams) depends on the inventory — without it, the platform team makes the call for you, usually wrong.
 
 ## Effort estimate
 
