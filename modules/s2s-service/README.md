@@ -31,8 +31,13 @@ The module API is **closed by design** (spec §4 decision #10). There is NO inpu
 | `alb_listener_rule_priority` | number | yes | — | Must be unique per ALB listener |
 | `cedar_policies` | list(object) | no | `[]` | `{ name, statement, description? }` |
 | `outbound_audiences` | list(string) | no | `[]` | Bounded contexts this service calls |
+| `register_with_lattice` | bool | no | `true` | Register this service with VPC Lattice. Only acts when `platform.enable_lattice` is also true. Set false to opt a single service out (ALB-only) on a Lattice-enabled platform |
+| `lattice_allowed_caller_arns` | list(string) | no | `[]` | When non-empty, tightens this service's Lattice auth policy to ONLY these principal (caller task-role) ARNs. When empty, the policy allows any principal in this account |
+| `calls_broker` | bool | no | `true` | Whether this service makes outbound SigV4 calls to the broker. Together with `outbound_audiences`, gates the task-role `vpc-lattice-svcs:Invoke` statement |
 | `env` | map(string) | no | `{}` | Extra env. Validation REJECTS keys colliding with platform-managed names |
 | `tags` | map(string) | no | `{}` | |
+
+The `platform` object also carries the Phase-2 Lattice fields `enable_lattice` (bool, default `false`), `lattice_service_network_id`, and `broker_lattice_dns`. They are optional in the object type, so consumers that assemble `platform` from SSM without them keep validating AND keep Lattice OFF (zero behavior change). The `module.platform.platform` composite output always sets all three.
 
 ## Outputs
 
@@ -46,6 +51,55 @@ The module API is **closed by design** (spec §4 decision #10). There is NO inpu
 | `log_group_name` | CloudWatch log group |
 | `task_definition_arn` | Task def ARN |
 | `policy_ids` | List of Cedar policy IDs created in the platform's AVP policy store |
+| `lattice_service_dns` | This service's VPC Lattice DNS name; `null` when not registered |
+| `lattice_service_arn` | This service's VPC Lattice service ARN (for tightening callers' policies); `null` when not registered |
+
+## VPC Lattice
+
+When the platform has `enable_lattice = true` (Phase 2) and this service keeps the
+default `register_with_lattice = true`, the module provisions a per-service Lattice
+plane in addition to the ALB. This mirrors the broker's Lattice registration owned
+by the platform module.
+
+**Per-service inbound (this module owns):**
+
+- `aws_vpclattice_service` (`<env>-<service>-svc`, `auth_type = AWS_IAM`)
+- `aws_vpclattice_service_network_service_association` into the platform's service network
+- `aws_vpclattice_target_group` (type `IP`, HTTP, `container_port`, health check `health_check_path`)
+- `aws_vpclattice_listener` (HTTP on 80, forwards to the IP target group)
+- `aws_vpclattice_auth_policy` (account-scoped allow by default; see below)
+- `aws_iam_role` assumed by `ecs.amazonaws.com` for ECS-managed target registration
+
+The ECS service registers its task ENIs into the IP target group via a
+`vpc_lattice_configurations` block referencing the registration role, the target
+group, and the **named** container port mapping (`<service>-<port>`).
+
+Lattice terminates at the service edge; the container only speaks plain HTTP
+internally, so the listener forwards over HTTP.
+
+**Auth policy (network-layer defense-in-depth):** by default the policy allows
+`vpc-lattice-svcs:Invoke` from any principal in **this account**
+(`aws:PrincipalAccount`). The transport is still SigV4/IAM-authenticated. DPoP +
+Cedar provide the real per-request authorization. To tighten, set
+`lattice_allowed_caller_arns` to the specific caller task-role ARNs — this replaces
+the account-wide condition with explicit Principal ARNs. (A caller publishes its
+`task_role_arn` output; the consumer wires it into this list.)
+
+**Outbound (SigV4) model:** the task role is granted `vpc-lattice-svcs:Invoke`
+whenever `calls_broker = true` (default — every service exchanges actor
+credentials at the broker) or `outbound_audiences` is non-empty. The resource is
+scoped to `arn:aws:vpc-lattice:<region>:<account>:service/*` (all Lattice services
+in-account) because the exact callee ARNs belong to other s2s-service instances /
+the platform broker and aren't available at plan time. **Tightening path:** once a
+callee publishes its `lattice_service_arn` output, the consumer can replace the
+wildcard with specific ARNs.
+
+**Opt-out:** set `register_with_lattice = false` to leave a single service ALB-only
+even on a Lattice-enabled platform. When the platform has Lattice **disabled**,
+this module creates zero Lattice resources regardless of `register_with_lattice`.
+
+The `lattice_service_dns` / `lattice_service_arn` outputs are `null` when the
+service is not registered.
 
 ## Example
 
