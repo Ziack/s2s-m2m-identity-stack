@@ -247,7 +247,15 @@ These are starting estimates for capacity planning, not commitments.
 
 ## What this guide ships
 
-_To be filled in subsequent task._
+- The phase-by-phase walkthrough above (Phases 1–5).
+- The inventory checklist: [onboarding-checklist.md](./onboarding-checklist.md).
+- The RBAC → Cedar translation appendix: [cedar-rbac-translation.md](./cedar-rbac-translation.md).
+- Three worked migration examples:
+  - [examples/migrations/from-passport-jwt/](../examples/migrations/from-passport-jwt/)
+  - [examples/migrations/from-casbin-rbac/](../examples/migrations/from-casbin-rbac/)
+  - [examples/migrations/from-no-auth/](../examples/migrations/from-no-auth/)
+
+**Verified by CI.** Each worked example's `before/` and `after/` are workspace packages; CI runs `npm test` + (for `after/`) `terraform validate` on every PR.
 
 ## Worked examples
 
