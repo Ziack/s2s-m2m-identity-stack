@@ -84,3 +84,30 @@ variable "ledger_audience" {
   type    = string
   default = "ledger"
 }
+
+# --- Token broker integration (Phase 6) --------------------------------------
+
+variable "user_issuer_signing_secret_arn" {
+  description = "Secrets Manager ARN of the calling-service user-issuer RSA signing key"
+  type        = string
+}
+
+variable "broker_token_endpoint" {
+  description = "Token broker /oauth2/token URL"
+  type        = string
+}
+
+variable "broker_jwks_uri" {
+  description = "Token broker JWKS URI"
+  type        = string
+}
+
+variable "broker_issuer" {
+  description = "Token broker issuer URL (matches BROKER_ISSUER_URL on the broker side)"
+  type        = string
+}
+
+variable "broker_actor_secret_arn" {
+  description = "Secrets Manager ARN holding the calling-service's broker-actor client_secret. Reuses the lending secret by default but can be a dedicated secret."
+  type        = string
+}

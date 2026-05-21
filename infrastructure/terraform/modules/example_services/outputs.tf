@@ -25,3 +25,19 @@ output "ledger_target_group_arn" {
 output "receiving_task_role_arn" {
   value = aws_iam_role.receiving_task.arn
 }
+
+output "alb_arn" {
+  value = aws_lb.this.arn
+}
+
+output "alb_listener_arn" {
+  value = aws_lb_listener.http.arn
+}
+
+output "alb_security_group_id" {
+  value = aws_security_group.alb.id
+}
+
+output "cluster_id" {
+  value = aws_ecs_cluster.this.id
+}

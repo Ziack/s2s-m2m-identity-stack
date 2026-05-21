@@ -89,8 +89,12 @@ resource "aws_iam_role" "calling_task" {
 
 data "aws_iam_policy_document" "calling_task" {
   statement {
-    actions   = ["secretsmanager:GetSecretValue", "secretsmanager:DescribeSecret"]
-    resources = [var.lending_client_secret_arn]
+    actions = ["secretsmanager:GetSecretValue", "secretsmanager:DescribeSecret"]
+    resources = distinct([
+      var.lending_client_secret_arn,
+      var.user_issuer_signing_secret_arn,
+      var.broker_actor_secret_arn,
+    ])
   }
   statement {
     actions   = ["kms:Decrypt"]
@@ -396,6 +400,12 @@ resource "aws_ecs_task_definition" "calling" {
       { name = "LENDING_QUEUE_URL", value = aws_sqs_queue.lending.url },
       { name = "LENDING_QUEUE_ARN", value = aws_sqs_queue.lending.arn },
       { name = "TARGET_BASE_URL", value = "http://${aws_lb.this.dns_name}" },
+      { name = "USER_ISSUER_URL", value = "http://${aws_lb.this.dns_name}/auth" },
+      { name = "USER_ISSUER_AUDIENCE", value = "calling-service" },
+      { name = "USER_ISSUER_SIGNING_KEY_SECRET_ARN", value = var.user_issuer_signing_secret_arn },
+      { name = "BROKER_TOKEN_ENDPOINT", value = var.broker_token_endpoint },
+      { name = "BROKER_ACTOR_CLIENT_ID", value = "calling-service" },
+      { name = "BROKER_ACTOR_SECRET_ARN", value = var.broker_actor_secret_arn },
     ]
     logConfiguration = {
       logDriver = "awslogs"
@@ -439,6 +449,10 @@ resource "aws_ecs_task_definition" "receiving" {
       { name = "LEDGER_OUTBOUND_CLIENT_ID", value = var.receiving_outbound_client_id },
       { name = "LEDGER_OUTBOUND_SECRET_ARN", value = var.receiving_outbound_secret_arn },
       { name = "LEDGER_OUTBOUND_ENABLED", value = "true" },
+      { name = "BROKER_JWKS_URI", value = var.broker_jwks_uri },
+      { name = "BROKER_ISSUER", value = var.broker_issuer },
+      { name = "BROKER_AUDIENCE", value = "receiving" },
+      { name = "BROKER_TOKEN_ENDPOINT", value = var.broker_token_endpoint },
     ]
     logConfiguration = {
       logDriver = "awslogs"
@@ -481,6 +495,9 @@ resource "aws_ecs_task_definition" "ledger" {
       { name = "AVP_POLICY_STORE_ID", value = var.ledger_policy_store_id },
       { name = "EXPECTED_AUDIENCE", value = var.ledger_audience },
       { name = "RESOURCE_PREFIX", value = var.ledger_audience },
+      { name = "BROKER_JWKS_URI", value = var.broker_jwks_uri },
+      { name = "BROKER_ISSUER", value = var.broker_issuer },
+      { name = "BROKER_AUDIENCE", value = "ledger" },
     ]
     logConfiguration = {
       logDriver = "awslogs"
