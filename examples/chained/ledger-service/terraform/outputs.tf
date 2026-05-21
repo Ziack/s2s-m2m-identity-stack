@@ -9,3 +9,8 @@ output "ecr_repository_uri" {
 output "cognito_client_id" {
   value = module.ledger_service.cognito_client_id
 }
+
+output "lattice_service_dns" {
+  description = "This service's VPC Lattice DNS (null when Lattice disabled / not registered)."
+  value       = module.ledger_service.lattice_service_dns
+}

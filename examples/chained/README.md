@@ -43,6 +43,29 @@ User → calling-service (lending/write)
 5. **Bootstrap actor catalog** (alice/bob/carol). Reuse the actor-catalog seed script Plan 1 ships at `modules/s2s-platform/scripts/seed-actor-catalog.sh`; pass the three sample users.
 6. **Run e2e** — see `./e2e/`.
 
+### VPC Lattice mode (optional)
+
+When the platform is deployed with `enable_lattice = true`, set `-var=enable_lattice=true`
+on each chained root to switch the inter-service hops from ALB + plain HTTP to VPC
+Lattice + SigV4. In Lattice mode each service publishes its own Lattice DNS to SSM
+(`/${env}/s2s/services/<service>/lattice_dns`) and callers consume their callee's DNS,
+plus the platform's `broker_lattice_dns`, as task env (`USE_LATTICE`, `*_LATTICE_DNS`,
+`BROKER_LATTICE_DNS`).
+
+**Apply order matters in Lattice mode** because a caller reads its callee's published
+`lattice_dns` from SSM. Apply callees before callers:
+
+1. `ledger-service` (publishes `ledger-service/lattice_dns`)
+2. `receiving-service` (consumes ledger's; publishes `receiving-service/lattice_dns`)
+3. `calling-service` (consumes receiving's)
+
+On a first-ever apply the consuming `data.aws_ssm_parameter` lookup will fail if the
+callee root hasn't been applied yet — this ordering is the handoff contract for the
+example. `enable_lattice` must match the platform's setting (the Lattice SSM params
+only exist when the platform enabled Lattice). When `enable_lattice = false`
+(default), all Lattice data sources/resources are skipped and the services run the
+ALB + plain-fetch path unchanged.
+
 ## The 3-user authorization matrix
 
 The canonical demo runs the same `POST /api/loans` flow as three users; the chain decides at the ledger-service:

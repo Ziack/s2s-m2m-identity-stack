@@ -13,3 +13,8 @@ output "cognito_client_id" {
 output "client_secret_arn" {
   value = module.calling_service.client_secret_arn
 }
+
+output "lattice_service_dns" {
+  description = "This service's VPC Lattice DNS (null when Lattice disabled / not registered)."
+  value       = module.calling_service.lattice_service_dns
+}
