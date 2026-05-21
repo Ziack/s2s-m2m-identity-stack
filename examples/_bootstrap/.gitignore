@@ -1,0 +1,20 @@
+# Real tfvars files (only the .example template is committed)
+*.tfvars
+*.tfvars.json
+!*.tfvars.json.example
+
+# Terraform state + working dirs
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+*.tfplan
+terraform.tfplan
+
+# Local-only operator artefacts
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
