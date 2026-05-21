@@ -26,6 +26,7 @@ output "task_definition_arn" {
   value = aws_ecs_task_definition.this.arn
 }
 
-output "policy_arns" {
-  value = [for p in aws_verifiedpermissions_policy.cedar : p.id]
+output "policy_ids" {
+  description = "List of Cedar policy IDs created in the platform's AVP policy store for this service's bounded_context"
+  value       = [for p in aws_verifiedpermissions_policy.cedar : p.id]
 }
