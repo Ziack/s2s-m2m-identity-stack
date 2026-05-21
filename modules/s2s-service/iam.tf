@@ -44,6 +44,9 @@ data "aws_iam_policy_document" "task" {
     resources = ["arn:aws:verifiedpermissions::${var.platform.account_id}:policy-store/${var.platform.policy_store_id}"]
   }
 
+  # Same secret as inbound — per spec §4 decision #10, the broker validates
+  # actor credentials directly against Cognito via client_credentials.
+  # No separate outbound-actor secret is needed.
   dynamic "statement" {
     for_each = length(var.outbound_audiences) > 0 ? [1] : []
     content {
