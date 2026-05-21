@@ -1,0 +1,14 @@
+// Sample permit policy for <%= boundedContext %>.
+// Author Cedar policies that match this service's authorization needs.
+// See docs/cedar-authoring.md for the schema and worked examples.
+
+permit (
+  principal,
+  action,
+  resource
+)
+when {
+  // Replace this body with your domain rules.
+  // Example: principal has access if their scope set includes <%= boundedContext %>/read.
+  context.scopes.contains("<%= boundedContext %>/read")
+};
