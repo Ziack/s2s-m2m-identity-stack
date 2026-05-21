@@ -35,6 +35,11 @@ locals {
     private_subnet_ids         = split(",", data.aws_ssm_parameter.platform["private_subnet_ids"].value)
     policy_store_id            = jsondecode(data.aws_ssm_parameter.platform["policy_store_ids"].value)[var.bounded_context]
     resource_server_identifier = jsondecode(data.aws_ssm_parameter.platform["resource_server_identifiers"].value)[var.bounded_context]
+    # Phase-2 Lattice platform fields. Only read from SSM when enable_lattice;
+    # otherwise null/false keeps Lattice OFF (optional() in the module type).
+    enable_lattice             = var.enable_lattice
+    lattice_service_network_id = var.enable_lattice ? data.aws_ssm_parameter.platform_lattice["lattice_service_network_id"].value : null
+    broker_lattice_dns         = var.enable_lattice ? data.aws_ssm_parameter.platform_lattice["broker_lattice_dns"].value : null
     sidecars                   = []
     sidecar_iam_statements     = []
     sidecar_volumes            = []
@@ -64,9 +69,9 @@ module "receiving_service" {
 
   outbound_audiences = ["ledger"]
 
-  env = {
+  env = merge({
     LOG_LEVEL = "info"
-  }
+  }, local.lattice_env)
 
   tags = {
     example     = "chained"
