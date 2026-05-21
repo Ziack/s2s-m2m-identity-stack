@@ -11,7 +11,7 @@ _To be filled in subsequent task._
 ### 2a — Add the SDK dependency
 
 ```bash
-npm install @s2s/auth-library@<v1.0 pinned version>
+npm install @s2s/auth-library@2.0.0
 ```
 
 No code changes yet. Verify build still works. Commit.
@@ -27,6 +27,8 @@ app.use('/api', createBrokerAuthMiddleware({
   brokerIssuer: process.env.BROKER_ISSUER!,
   brokerAudience: process.env.BROKER_AUDIENCE!,
   policyStoreId: process.env.AVP_POLICY_STORE_ID!,
+  awsRegion: process.env.AWS_REGION!,
+  redisEndpoint: process.env.REDIS_ENDPOINT!,
   mode: 'log-only',
 }));
 app.use('/api', legacyAuthMiddleware);
@@ -34,7 +36,7 @@ app.use('/api', legacyAuthMiddleware);
 
 The middleware validates any DPoP-bound broker tokens it sees, logs the decision (with `user.sub`, `actor_chain`, `decision`), and lets the request flow through to legacy auth. This gives the team a release cycle to measure real traffic shape, observe denial rates, and reconcile Cedar policy gaps before enforcement.
 
-> **SDK contract (Plan 2):** `createBrokerAuthMiddleware` accepts `mode: 'log-only' | 'enforce'`. In `log-only` mode, the middleware never short-circuits — it always calls `next()` regardless of decision. Decisions are emitted as `pino` info logs and incremented on the `s2s_broker_decision_total` counter labelled `mode='shadow', decision='allow'|'deny'`. See `packages/auth-library/test/middleware/shadow-mode.test.ts` for the verified behaviour.
+> **SDK contract (Plan 2):** `createBrokerAuthMiddleware` accepts `mode: 'log-only' | 'enforce'`. In `log-only` mode, the middleware never short-circuits — it always calls `next()` regardless of decision. Decisions are emitted as `pino` info logs and incremented on the `m2mShadowModeDecisionsTotal` counter labelled `{ decision, result }` (where `decision` is `ALLOW`/`DENY`/`INVALID` and `result` is `would_allow`/`would_deny`/`invalid_token`). See `packages/auth-library/test/middleware/shadow-mode.test.ts` for the verified behaviour.
 
 ### 2c — Cut over to enforcement
 

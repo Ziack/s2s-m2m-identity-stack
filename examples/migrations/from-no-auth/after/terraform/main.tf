@@ -41,7 +41,9 @@ locals {
   }
 }
 
-# Module source pinned to <v1.0 pinned version> by Plan 5's release task.
+# Module source pinned to v2.0.0 by Plan 5's release task.
+# Consumers should use: source = "github.com/Ziack/s2s-m2m-identity-stack//modules/s2s-service?ref=v2.0.0"
+# The local relative source is retained so in-repo CI can `terraform init` without network access.
 module "internal" {
   source = "../../../../../modules/s2s-service"
 
