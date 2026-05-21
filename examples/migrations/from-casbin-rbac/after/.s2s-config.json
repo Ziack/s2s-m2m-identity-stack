@@ -1,0 +1,5 @@
+{
+  "name": "reports",
+  "bounded_context": "reports",
+  "version": "<v1.0 pinned version>"
+}
