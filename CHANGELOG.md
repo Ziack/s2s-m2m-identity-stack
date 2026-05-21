@@ -17,6 +17,48 @@ A single version line covers every artifact in the repo (see §9.1 of the design
 
 (Nothing yet.)
 
+## [2.0.2] — 2026-05-21
+
+Closes the **deploy-story gap** identified after v2.0.1: until this
+release, there was no standalone Terraform root that deployed
+`modules/s2s-platform` (every example called `s2s-service` and assumed the
+platform already existed), and the chained-example orchestrator script
+still referenced v1 paths that had been deleted in v2.0.0.
+
+### Added
+
+- `examples/_platform/` — deployable platform root. Wraps
+  `modules/s2s-platform` in a thin `module "platform"` block, exposes every
+  output, and ships a `fixtures/dev.tfvars.json.example` template. The
+  underscore prefix sorts it to the top of `examples/` and signals
+  "infrastructure, not a service example". See
+  `examples/_platform/README.md`.
+- `docs/deploying-the-stack.md` — end-to-end operator walkthrough from
+  clone to deployed: prerequisites, platform apply, image build/push, per-
+  service apply, actor-catalog bootstrap, smoke test, and a full
+  RETAIN-policy cleanup runbook for teardown.
+
+### Fixed
+
+- `examples/chained/e2e/src/scripts/deploy-and-test.sh` — rewritten for
+  the v2 layout. Replaced stale paths (`infrastructure/terraform/`,
+  `packages/examples/calling-service/Dockerfile`, the `@s2s/calling-service`
+  workspace) with the current ones (`examples/_platform/`,
+  `examples/chained/<svc>/Dockerfile`,
+  `examples/chained/<svc>/terraform/`, broker at
+  `packages/token-broker/Dockerfile`). Added a `teardown` subcommand that
+  destroys services first, then the platform. Documented the actor-catalog
+  bootstrap step as a known gap pending a future platform-module
+  enhancement.
+
+### Known limitations
+
+- The `s2s-platform` module does not yet provision the broker's
+  `actor-catalog` Secrets Manager secret. The orchestrator script and
+  `docs/deploying-the-stack.md` §7 create it manually on first deploy and
+  force a broker redeploy. Folding this into the module is tracked for a
+  future release.
+
 ## [2.0.1] — 2026-05-21
 
 ### Removed
