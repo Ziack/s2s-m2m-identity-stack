@@ -42,5 +42,18 @@ resource "aws_ecs_service" "this" {
     container_port   = var.container_port
   }
 
+  # ECS-managed VPC Lattice target registration. Gated identically to the
+  # resources in lattice.tf — only emitted when the platform has Lattice enabled
+  # AND this service opts in. ECS assumes the lattice_infra role to register the
+  # task ENIs' IPs into the Lattice IP target group via the named port mapping.
+  dynamic "vpc_lattice_configurations" {
+    for_each = local.service_lattice_enabled == 1 ? [1] : []
+    content {
+      role_arn         = aws_iam_role.lattice_infra[0].arn
+      target_group_arn = aws_vpclattice_target_group.this[0].arn
+      port_name        = local.lattice_port_name
+    }
+  }
+
   tags = local.common_tags
 }

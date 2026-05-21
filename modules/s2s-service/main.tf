@@ -57,7 +57,7 @@ locals {
     name         = var.service_name
     image        = var.image_uri
     essential    = true
-    portMappings = [{ containerPort = var.container_port, protocol = "tcp" }]
+    portMappings = [{ name = local.lattice_port_name, containerPort = var.container_port, protocol = "tcp" }]
     environment  = local.merged_env
     healthCheck = {
       command  = ["CMD-SHELL", "wget -q -O- http://localhost:${var.container_port}${var.health_check_path} || exit 1"]
