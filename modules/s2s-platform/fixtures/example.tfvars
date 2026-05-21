@@ -1,0 +1,10 @@
+region                = "us-east-1"
+account_id            = "123456789012"
+environment           = "dev"
+vpc_id                = "vpc-0123456789abcdef0"
+private_subnet_ids    = ["subnet-aaa", "subnet-bbb"]
+alb_subnet_ids        = ["subnet-aaa", "subnet-bbb"]
+bounded_contexts      = ["lending"]
+user_issuer_url       = "https://idp.example.com/realms/m2m"
+broker_image_uri      = "ghcr.io/ziack/s2s-token-broker:v2.0.0"
+cognito_domain_prefix = "s2s-fixture-dev"
