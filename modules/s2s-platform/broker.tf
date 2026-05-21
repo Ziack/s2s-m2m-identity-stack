@@ -41,8 +41,11 @@ resource "aws_iam_role" "broker_task" {
 
 data "aws_iam_policy_document" "broker_task" {
   statement {
-    actions   = ["secretsmanager:GetSecretValue"]
-    resources = [aws_secretsmanager_secret.broker_signing.arn]
+    actions = ["secretsmanager:GetSecretValue"]
+    resources = [
+      aws_secretsmanager_secret.broker_signing.arn,
+      aws_secretsmanager_secret.broker_actor_catalog.arn,
+    ]
   }
   statement {
     actions   = ["kms:Decrypt"]
@@ -78,16 +81,24 @@ resource "aws_ecs_task_definition" "broker" {
       linuxParameters        = { capabilities = { add = [], drop = ["ALL"] } }
       portMappings           = [{ containerPort = 8080, protocol = "tcp" }]
       environment = [
+        { name = "BROKER_ISSUER_URL", value = local.broker_base_url },
+        { name = "BROKER_SIGNING_KEY_SECRET_ARN", value = aws_secretsmanager_secret.broker_signing.arn },
+        { name = "ACTOR_CATALOG_SECRET_ARN", value = aws_secretsmanager_secret.broker_actor_catalog.arn },
         { name = "USER_ISSUER_URL", value = var.user_issuer_url },
         { name = "USER_ISSUER_AUDIENCE", value = var.user_issuer_audience },
         { name = "REDIS_ENDPOINT", value = aws_elasticache_serverless_cache.this.endpoint[0].address },
         { name = "REDIS_PORT", value = tostring(aws_elasticache_serverless_cache.this.endpoint[0].port) },
         { name = "USER_POOL_ID", value = aws_cognito_user_pool.this.id },
         { name = "COGNITO_DOMAIN", value = aws_cognito_user_pool_domain.this.domain },
+        { name = "AWS_REGION", value = var.region },
+        { name = "PORT", value = "8080" },
       ]
-      secrets = [
-        { name = "BROKER_SIGNING_KEY", valueFrom = aws_secretsmanager_secret.broker_signing.arn }
-      ]
+      # `secrets = [...]` intentionally omitted — the broker fetches its own
+      # secret values (signing key, actor catalog) via the task role using the
+      # ARNs passed in via `environment` above. Letting ECS inject the secret
+      # value as an env var would require the broker to also know the ARN
+      # separately, and would defeat in-process caching/rotation in
+      # signingKeyLoader.
       logConfiguration = {
         logDriver = "awslogs"
         options = {
@@ -97,7 +108,7 @@ resource "aws_ecs_task_definition" "broker" {
         }
       }
       healthCheck = {
-        command  = ["CMD-SHELL", "wget -q -O- http://localhost:8080/healthz || exit 1"]
+        command  = ["CMD-SHELL", "wget -q -O- http://localhost:8080/health || exit 1"]
         interval = 30
         timeout  = 5
         retries  = 3
@@ -116,7 +127,7 @@ resource "aws_lb_target_group" "broker" {
   target_type = "ip"
 
   health_check {
-    path                = "/healthz"
+    path                = "/health"
     healthy_threshold   = 2
     unhealthy_threshold = 3
   }
