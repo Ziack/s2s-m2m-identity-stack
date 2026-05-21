@@ -1,0 +1,13 @@
+import { Router } from 'express';
+
+export const apiRouter: Router = Router();
+
+// Placeholder route — replace with your domain logic.
+// Inbound auth has already been validated by the middleware mounted in index.ts.
+apiRouter.get('/echo', (req, res) => {
+  res.json({
+    service: '<%= serviceName %>',
+    bounded_context: '<%= boundedContext %>',
+    auth: req.auth ?? null,
+  });
+});
