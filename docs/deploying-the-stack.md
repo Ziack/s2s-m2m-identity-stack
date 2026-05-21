@@ -178,10 +178,11 @@ Each apply:
 ## 7. Bootstrap the actor catalog
 
 The broker rejects token-exchange requests until its actor-catalog secret
-contains the sha256 of each caller's Cognito client_secret. The platform
-module v2.0.2 does **not** yet provision the catalog secret automatically
-(it's documented as a known gap — see CHANGELOG v2.0.2), so the operator
-creates it on first deploy.
+contains the sha256 of each caller's Cognito client_secret. As of v2.0.4
+the platform module provisions the catalog secret automatically (with an
+empty `{}` placeholder body so the broker boots cleanly on first apply)
+— the operator just overwrites the body with the real hashes and forces
+a broker redeploy so the new catalog is loaded.
 
 ```bash
 ENVIRONMENT=dev   # match your fixtures
@@ -204,8 +205,8 @@ cat > /tmp/actor-catalog.json <<JSON
 }
 JSON
 
-aws secretsmanager create-secret \
-  --name "$CATALOG_SECRET_ID" \
+aws secretsmanager put-secret-value \
+  --secret-id "$CATALOG_SECRET_ID" \
   --secret-string file:///tmp/actor-catalog.json
 
 # Force the broker to reload.

@@ -200,17 +200,14 @@ cat > /tmp/actor-catalog.json <<JSON
 }
 JSON
 
-# Idempotent create-or-update on the catalog secret.
+# The actor-catalog secret is provisioned by the platform module
+# (modules/s2s-platform/secrets.tf, since v2.0.4) with an empty `{}`
+# placeholder body. We just overwrite the body with the real hashes —
+# no create-secret needed.
 CATALOG_SECRET_ID="$ENVIRONMENT-s2s/platform/broker/actor-catalog"
-if aws secretsmanager describe-secret --secret-id "$CATALOG_SECRET_ID" >/dev/null 2>&1; then
-  aws secretsmanager put-secret-value \
-    --secret-id "$CATALOG_SECRET_ID" \
-    --secret-string file:///tmp/actor-catalog.json >/dev/null
-else
-  aws secretsmanager create-secret \
-    --name "$CATALOG_SECRET_ID" \
-    --secret-string file:///tmp/actor-catalog.json >/dev/null
-fi
+aws secretsmanager put-secret-value \
+  --secret-id "$CATALOG_SECRET_ID" \
+  --secret-string file:///tmp/actor-catalog.json >/dev/null
 
 # Force the broker to reload the catalog.
 aws ecs update-service \
