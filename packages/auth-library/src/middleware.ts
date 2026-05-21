@@ -9,6 +9,10 @@ import { createRedisNonceStore } from './dpop/dpopNonce.js';
 import { createAuthorize, type AvpClientLike } from './authz/authorize.js';
 import { createCedarLocal } from './authz/cedarLocal.js';
 import { getRedisClient } from './redisClient.js';
+import { DPOP_TOKEN_HEADER } from './lattice/sigv4Client.js';
+
+/** Lower-cased {@link DPOP_TOKEN_HEADER} for indexing into Express's normalized headers. */
+const DPOP_TOKEN_HEADER_LC = DPOP_TOKEN_HEADER.toLowerCase();
 
 export type BrokerAuthMode = 'log-only' | 'enforce';
 
@@ -61,12 +65,29 @@ export function createAuthMiddleware(deps: AuthMiddlewareDeps): RequestHandler {
     };
 
     try {
-      const authHeader = (req.headers.authorization ?? '') as string;
       const dpopHeader = (req.headers.dpop ?? '') as string;
-      if (!authHeader) { reject(401, ERROR_CODES.INVALID_TOKEN, 'missing Authorization header'); return; }
-      const m = authHeader.match(/^(?:DPoP|Bearer)\s+(.+)$/i);
-      if (!m) { reject(401, ERROR_CODES.INVALID_TOKEN, 'malformed Authorization header'); return; }
-      const accessToken = m[1] as string;
+
+      // Token source resolution (Lattice contract):
+      //   1. `X-DPoP-Token` (DPOP_TOKEN_HEADER) — used behind VPC Lattice, where
+      //      the `Authorization` header is occupied by the SigV4 credential.
+      //   2. Fallback: `Authorization: DPoP <token>` / `Bearer <token>` — for
+      //      direct (non-Lattice) callers. Back-compat path.
+      // Only the token SOURCE differs; DPoP proof + all verification is unchanged.
+      let accessToken: string;
+      const dpopTokenHeader = (req.headers[DPOP_TOKEN_HEADER_LC] ?? '') as string;
+      if (dpopTokenHeader) {
+        // X-DPoP-Token carries the bare token (no scheme prefix). Tolerate an
+        // accidental `DPoP `/`Bearer ` prefix defensively.
+        const xm = dpopTokenHeader.match(/^(?:DPoP|Bearer)\s+(.+)$/i);
+        accessToken = (xm ? xm[1] : dpopTokenHeader.trim()) as string;
+        if (!accessToken) { reject(401, ERROR_CODES.INVALID_TOKEN, `malformed ${DPOP_TOKEN_HEADER} header`); return; }
+      } else {
+        const authHeader = (req.headers.authorization ?? '') as string;
+        if (!authHeader) { reject(401, ERROR_CODES.INVALID_TOKEN, 'missing access token'); return; }
+        const m = authHeader.match(/^(?:DPoP|Bearer)\s+(.+)$/i);
+        if (!m) { reject(401, ERROR_CODES.INVALID_TOKEN, 'malformed Authorization header'); return; }
+        accessToken = m[1] as string;
+      }
 
       const validated = await deps.validateToken(accessToken, { expectedAudience: deps.expectedAudience });
 
