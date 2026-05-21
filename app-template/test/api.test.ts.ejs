@@ -1,0 +1,26 @@
+import { describe, it, expect, vi } from 'vitest';
+import express from 'express';
+import request from 'supertest';
+
+vi.mock('../src/lib/auth.js', () => ({
+  buildAuthMiddleware: () => (req: any, _res: any, next: any) => {
+    req.auth = { sub: 'test-sub', scopes: ['<%= boundedContext %>/read'], decision: 'ALLOW', reasons: [] };
+    next();
+  },
+}));
+
+const { apiRouter } = await import('../src/routes/api.js');
+const { buildAuthMiddleware } = await import('../src/lib/auth.js');
+
+describe('api router', () => {
+  const app = express();
+  app.use('/api', buildAuthMiddleware(), apiRouter);
+
+  it('GET /api/echo returns service identity + auth context', async () => {
+    const r = await request(app).get('/api/echo');
+    expect(r.status).toBe(200);
+    expect(r.body.service).toBe('<%= serviceName %>');
+    expect(r.body.bounded_context).toBe('<%= boundedContext %>');
+    expect(r.body.auth.sub).toBe('test-sub');
+  });
+});
