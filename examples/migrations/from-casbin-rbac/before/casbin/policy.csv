@@ -1,0 +1,6 @@
+p, analyst, /reports, read
+p, admin, /reports, read
+p, admin, /reports, write
+p, admin, /reports/:id, delete
+g, alice, analyst
+g, bob, admin
