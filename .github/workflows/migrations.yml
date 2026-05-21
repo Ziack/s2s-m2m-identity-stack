@@ -1,0 +1,39 @@
+name: migrations
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  migrations-test:
+    name: ${{ matrix.example }}/${{ matrix.variant }} npm test
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        example: [from-passport-jwt, from-casbin-rbac, from-no-auth]
+        variant: [before, after]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci
+      - run: npm test -w @s2s/example-${{ matrix.example }}-${{ matrix.variant }}
+
+  migrations-terraform:
+    name: ${{ matrix.example }}/after terraform validate
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        example: [from-passport-jwt, from-casbin-rbac, from-no-auth]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: '1.6.6'
+      - run: terraform -chdir=examples/migrations/${{ matrix.example }}/after/terraform init -backend=false
+      - run: terraform -chdir=examples/migrations/${{ matrix.example }}/after/terraform validate
