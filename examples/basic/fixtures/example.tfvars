@@ -1,0 +1,5 @@
+account_id      = "123456789012"
+region          = "us-east-1"
+environment     = "dev"
+bounded_context = "lending"
+image_tag       = "v0.1.0"
