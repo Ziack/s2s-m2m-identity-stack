@@ -3,8 +3,18 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "workspaces": ["packages/*", "packages/examples/*", "packages/services/*"],
-  "engines": { "node": ">=20.0.0" },
+  "workspaces": [
+    "packages/*",
+    "packages/examples/*",
+    "packages/services/*",
+    "examples/basic/*",
+    "examples/chained/*",
+    "examples/multi-context/*",
+    "examples/chained/e2e"
+  ],
+  "engines": {
+    "node": ">=20.0.0"
+  },
   "scripts": {
     "build": "npm -ws run build",
     "test": "npm -ws run test",
