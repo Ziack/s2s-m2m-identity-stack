@@ -1,0 +1,168 @@
+name: pr
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  node:
+    name: node (${{ matrix.workspace }})
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        workspace:
+          - packages/auth-library
+          - packages/cedar-policies
+          - packages/create-service
+          - packages/token-broker
+          - examples/chained/calling-service
+          - examples/chained/receiving-service
+          - examples/chained/ledger-service
+          - examples/chained/e2e
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - name: npm install (root)
+        run: npm install --workspaces=false
+      - name: npm install (workspace)
+        working-directory: ${{ matrix.workspace }}
+        run: npm install
+      - name: typecheck
+        working-directory: ${{ matrix.workspace }}
+        run: npx tsc --noEmit
+      - name: test
+        working-directory: ${{ matrix.workspace }}
+        run: npm test --if-present
+
+  terraform-fmt:
+    name: terraform fmt
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: '1.8.5'
+      - run: terraform fmt -check -recursive modules/ examples/
+
+  terraform-validate:
+    name: terraform validate (${{ matrix.module }})
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        module:
+          - modules/s2s-platform
+          - modules/s2s-service
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: '1.8.5'
+      - working-directory: ${{ matrix.module }}
+        run: |
+          terraform init -backend=false
+          terraform validate
+
+  tflint:
+    name: tflint
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: terraform-linters/setup-tflint@v4
+        with:
+          tflint_version: 'v0.51.1'
+      - run: tflint --recursive
+
+  terraform-plan-examples:
+    name: terraform plan (${{ matrix.example }})
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        example:
+          - examples/chained/calling-service/terraform
+          - examples/chained/receiving-service/terraform
+          - examples/chained/ledger-service/terraform
+          - examples/migrations/from-passport-jwt/after/terraform
+          - examples/migrations/from-casbin-rbac/after/terraform
+          - examples/migrations/from-no-auth/after/terraform
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: '1.8.5'
+      - working-directory: ${{ matrix.example }}
+        run: |
+          terraform init -backend=false
+          terraform validate
+
+  cli-integration:
+    name: cli integration test
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: '1.8.5'
+      - name: install create-service
+        working-directory: packages/create-service
+        run: npm install && npm run build --if-present
+      - name: scaffold a service into /tmp/test-service
+        run: |
+          node packages/create-service/dist/index.js \
+            --non-interactive \
+            --config=packages/create-service/fixtures/test-config.json \
+            /tmp/test-service
+      - name: compile + test the scaffold
+        working-directory: /tmp/test-service
+        run: |
+          npm install
+          npx tsc --noEmit
+          npm test
+      - name: terraform validate the scaffold
+        working-directory: /tmp/test-service/terraform
+        run: |
+          terraform init -backend=false
+          terraform validate
+
+  broker-image-build:
+    name: broker image build (no push)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v5
+        with:
+          context: packages/token-broker
+          push: false
+          tags: s2s-token-broker:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  changelog-check:
+    name: changelog entry for tag
+    runs-on: ubuntu-22.04
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/checkout@v4
+      - name: assert CHANGELOG.md has an entry for this tag
+        run: |
+          TAG="${GITHUB_REF##refs/tags/}"
+          VERSION="${TAG#v}"
+          if ! grep -qE "^## \[${VERSION}\]" CHANGELOG.md; then
+            echo "::error::CHANGELOG.md is missing an entry for [${VERSION}]"
+            exit 1
+          fi
