@@ -9,6 +9,15 @@ The underscore prefix (`_platform/`) keeps this directory at the top of
 `examples/` alphabetically and signals "infrastructure, not a service
 example".
 
+## Prerequisites
+
+This root assumes you already have a VPC with at least two private subnets
+in different AZs and NAT egress (the broker ECS task pulls images from ECR
+and needs outbound HTTPS). **If you don't have one**, run
+[`examples/_bootstrap/`](../_bootstrap/) first — it creates a minimal
+PoC-grade VPC and prints a `next_steps` JSON blob you paste straight into
+this root's `dev.tfvars.json`.
+
 ## What it provisions
 
 A single call to `module "platform" { source = "../../modules/s2s-platform" }`,
