@@ -1,0 +1,46 @@
+function req(name: string): string {
+  const v = process.env[name];
+  if (!v) throw new Error(`Missing required env var: ${name}`);
+  return v;
+}
+
+function opt(name: string, fallback = ''): string {
+  return process.env[name] ?? fallback;
+}
+
+export const config = {
+  serviceName: '<%= serviceName %>',
+  boundedContext: '<%= boundedContext %>',
+  port: Number(opt('PORT', '<%= containerPort %>')),
+
+  // Cognito (platform-managed)
+  COGNITO_DOMAIN: req('COGNITO_DOMAIN'),
+  USER_POOL_ID: req('USER_POOL_ID'),
+  COGNITO_CLIENT_ID: req('COGNITO_CLIENT_ID'),
+  COGNITO_CLIENT_SECRET_ARN: req('COGNITO_CLIENT_SECRET_ARN'),
+
+  // Broker (platform-managed)
+  BROKER_URL: req('BROKER_URL'),
+  BROKER_JWKS_URI: req('BROKER_JWKS_URI'),
+  BROKER_ISSUER: req('BROKER_ISSUER'),
+  BROKER_AUDIENCE: req('BROKER_AUDIENCE'),
+  BROKER_TOKEN_ENDPOINT: req('BROKER_TOKEN_ENDPOINT'),
+
+  // Redis (platform-managed)
+  REDIS_ENDPOINT: req('REDIS_ENDPOINT'),
+  REDIS_PORT: Number(opt('REDIS_PORT', '6379')),
+
+  // AVP (platform-managed)
+  AVP_POLICY_STORE_ID: req('AVP_POLICY_STORE_ID'),
+  AVP_RESOURCE_SERVER: req('AVP_RESOURCE_SERVER'),
+
+  AWS_REGION: req('AWS_REGION'),
+  OUTBOUND_AUDIENCES: opt('OUTBOUND_AUDIENCES').split(',').map((s) => s.trim()).filter(Boolean),
+
+  // Shadow mode toggle (set to "true" in env to keep middleware in log-only)
+  SHADOW_MODE: opt('S2S_SHADOW_MODE', 'false') === 'true',
+
+  LOG_LEVEL: opt('LOG_LEVEL', 'info'),
+} as const;
+
+export type AppConfig = typeof config;
