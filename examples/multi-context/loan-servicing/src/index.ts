@@ -1,0 +1,6 @@
+import { createServer } from "./server.js";
+
+const port = Number(process.env.PORT ?? 3000);
+createServer().listen(port, () => {
+  console.log(JSON.stringify({ level: "info", msg: "loan-servicing listening", port }));
+});
