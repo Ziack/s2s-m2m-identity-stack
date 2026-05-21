@@ -62,6 +62,7 @@ Reference implementation: see git tag `v1.0.0` for the pre-modularization versio
 | `resource_server_identifiers` | Map `bounded_context → identifier` |
 | `policy_store_ids` / `policy_store_arns` | Maps `bounded_context → AVP store id/arn` |
 | `broker_url` / `broker_token_endpoint` / `broker_jwks_uri` / `broker_issuer` | Broker URLs |
+| `actor_catalog_secret_arn` | Secrets Manager ARN of the broker's actor catalog. Provisioned with an empty placeholder body; the orchestrator overwrites it with real sha256 hashes after per-service Cognito client_secrets exist. |
 | `kms_secrets_key_arn` | CMK for service secrets |
 | `redis_endpoint` / `redis_port` | Valkey cache endpoint |
 | `alb_listener_arn` / `alb_dns_name` / `alb_security_group_id` / `workload_security_group_id` | Network plane |

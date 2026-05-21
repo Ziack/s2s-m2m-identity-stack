@@ -10,6 +10,7 @@ locals {
     broker_token_endpoint      = "${local.broker_base_url}/oauth2/token"
     broker_jwks_uri            = "${local.broker_base_url}/.well-known/jwks.json"
     broker_issuer              = local.broker_base_url
+    actor_catalog_secret_arn   = aws_secretsmanager_secret.broker_actor_catalog.arn
     kms_secrets_key_arn        = aws_kms_key.secrets.arn
     redis_endpoint             = aws_elasticache_serverless_cache.this.endpoint[0].address
     redis_port                 = tostring(aws_elasticache_serverless_cache.this.endpoint[0].port)

@@ -20,6 +20,7 @@ output "broker_url" { value = local.broker_base_url }
 output "broker_token_endpoint" { value = "${local.broker_base_url}/oauth2/token" }
 output "broker_jwks_uri" { value = "${local.broker_base_url}/.well-known/jwks.json" }
 output "broker_issuer" { value = local.broker_base_url }
+output "actor_catalog_secret_arn" { value = aws_secretsmanager_secret.broker_actor_catalog.arn }
 
 # Infra plane
 output "kms_secrets_key_arn" { value = aws_kms_key.secrets.arn }
