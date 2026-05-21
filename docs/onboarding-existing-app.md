@@ -236,7 +236,14 @@ curl https://$(terraform output -raw service_url)/health
 
 ## Effort estimate
 
-_To be filled in subsequent task._
+| Profile | Description | Expected effort |
+| --- | --- | --- |
+| Small | Single bounded context, ≤ 3 routes, ≤ 1 outbound call, stateless, simple RBAC. | 1–2 dev-days |
+| Medium | 1 bounded context, 5–15 routes, 2–5 outbound calls, simple Cedar policies. | 3–5 dev-days |
+| Large | Multiple bounded contexts touched, > 15 routes or > 5 outbound calls, non-trivial ABAC. | 1.5–3 dev-weeks |
+| Bespoke | Stateful (sticky sessions / on-disk state) or proposes a new bounded context. | Schedule a platform RFC first; no estimate until refactor is scoped. |
+
+These are starting estimates for capacity planning, not commitments.
 
 ## What this guide ships
 
