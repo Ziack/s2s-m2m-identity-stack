@@ -1,0 +1,14 @@
+import type { RequestHandler } from 'express';
+import { createBrokerAuthMiddleware } from '@s2s/auth-library';
+import { config } from '../config.js';
+
+export function buildAuthMiddleware(): RequestHandler {
+  return createBrokerAuthMiddleware({
+    brokerJwksUri: config.BROKER_JWKS_URI,
+    brokerIssuer: config.BROKER_ISSUER,
+    brokerAudience: config.BROKER_AUDIENCE,
+    policyStoreId: config.AVP_POLICY_STORE_ID,
+    resourcePrefix: '<%= boundedContext %>',
+    mode: config.SHADOW_MODE ? 'log-only' : 'enforce',
+  });
+}
