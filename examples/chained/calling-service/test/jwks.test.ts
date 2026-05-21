@@ -22,4 +22,19 @@ describe('GET /.well-known/jwks.json', () => {
     const res = await request(app).get('/.well-known/jwks.json');
     expect(res.headers['cache-control']).toMatch(/max-age=\d+/);
   });
+
+  it('serves under the /auth prefix so it routes via the /auth/* ALB rule (not the broker /.well-known/*)', async () => {
+    // index.ts mounts jwksRouter() under the USER_ISSUER_URL path component
+    // (e.g. /auth) instead of root, so the JWKS is reachable at
+    // /auth/.well-known/jwks.json and never falls into the broker's
+    // higher-priority /.well-known/* listener rule.
+    const app = express().use('/auth', jwksRouter());
+    const reachable = await request(app).get('/auth/.well-known/jwks.json');
+    expect(reachable.status).toBe(200);
+    expect(reachable.body.keys).toHaveLength(1);
+
+    // The bare root path is no longer served by this app's listener mount.
+    const rootMiss = await request(app).get('/.well-known/jwks.json');
+    expect(rootMiss.status).toBe(404);
+  });
 });

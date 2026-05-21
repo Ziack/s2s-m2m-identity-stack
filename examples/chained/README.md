@@ -85,7 +85,29 @@ The canonical demo runs the same `POST /api/loans` flow as three users; the chai
 | **bob**   | `loan-officer`                  | `403 partial` — receiving accepts, ledger forbids | `lending.cedar` permits; `ledger.cedar` requires `ledger-writer` |
 | **carol** | `reader`                        | `403` at receiving — chain never reaches ledger | `lending.cedar` forbids non-officers |
 
-## Known limitations
+## ALB ingress (calling-service)
 
-- The `calling-service` exposes three top-level paths (`/auth/login`, `/demo/sync`, `/.well-known/jwks.json`) but the `s2s-service` module accepts a single `alb_path_pattern`. The TF root uses `/auth/*`; `/demo/sync` and `/.well-known/jwks.json` are reached via service-discovery DNS inside the VPC. If your deployment needs all three publicly, file an issue against `modules/s2s-service` requesting `additional_alb_path_patterns`.
+The `calling-service` is the only user-facing service on the shared ALB. It routes
+all four of its path families through a single listener rule via the
+`s2s-service` module's `alb_path_patterns` input:
+
+```hcl
+alb_path_patterns = ["/auth/*", "/demo/*", "/health", "/metrics"]
+```
+
+- `/auth/*` — the local IdP (login, OIDC discovery) **and** the user-issuer JWKS,
+  served at `/auth/.well-known/jwks.json`. The broker fetches the user-issuer
+  JWKS from `${USER_ISSUER_URL}/.well-known/jwks.json`; with `USER_ISSUER_URL =
+  http://<alb>/auth` this resolves to `/auth/.well-known/jwks.json` and routes to
+  calling-service. (Mounting the JWKS at the bare root `/.well-known/jwks.json`
+  would be intercepted by the platform broker's higher-priority `/.well-known/*`
+  rule, so it lives under `/auth`.)
+- `/demo/*` — the demo sync/async endpoints (e.g. `POST /demo/sync`).
+- `/health`, `/metrics` — liveness and metrics, reachable through the shared
+  listener for sanity checks.
+
+`receiving-service` and `ledger-service` stay Lattice-internal and keep a single
+`alb_path_pattern` (`/api/loans*` and `/api/ledger*`); their health is checked by
+their target groups directly, so only the user-facing calling-service claims
+`/health` on the listener (avoiding ambiguous overlapping rules).
 - The `image_uri` is constructed manually from `account_id`/`region`/`environment`/`image_tag` instead of referencing `module.<svc>.ecr_repository_uri`, because the module both creates the ECR repository and consumes its URI as input — a self-referential cycle. See Plan 3 Checkpoint 1 notes.

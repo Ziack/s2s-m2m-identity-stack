@@ -56,7 +56,7 @@ module "calling_service" {
   scopes                     = ["lending/write"]
   image_uri                  = "${var.account_id}.dkr.ecr.${var.region}.amazonaws.com/${var.environment}/calling-service:${var.image_tag}"
   container_port             = 3000
-  alb_path_pattern           = "/auth/*"
+  alb_path_patterns          = ["/auth/*", "/demo/*", "/health", "/metrics"]
   alb_listener_rule_priority = 100
   desired_count              = 2
 

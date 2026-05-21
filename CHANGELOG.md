@@ -17,6 +17,23 @@ A single version line covers every artifact in the repo (see §9.1 of the design
 
 (Nothing yet.)
 
+## [2.1.1] — 2026-05-21
+
+Fixes the **calling-service user-facing ALB ingress**. These two bugs were diagnosed alongside the v2.1.0 Dockerfile fix but were missed in that release — v2.1.0 made the broker reachable and fixed the image builds, but the calling-service's own user-facing routes still 404'd or were intercepted.
+
+### Fixed
+
+- **calling-service `/demo/*`, `/health`, `/metrics` returned 404.** `modules/s2s-service`'s ALB listener rule accepted only a single `alb_path_pattern` (string), and calling-service passed only `/auth/*`. The other route families fell through to the ALB's default 404 — so `POST /demo/sync` never reached the service. The module now also accepts `alb_path_patterns` (`list(string)`, up to 5 values OR'd into one listener rule). calling-service routes `["/auth/*", "/demo/*", "/health", "/metrics"]`. Backward-compatible: `alb_path_pattern` (string) still works; exactly one of the two must be set (validated). receiving (`/api/loans*`) and ledger (`/api/ledger*`) keep the string form. Only the user-facing calling-service exposes `/health` + `/metrics` via the shared listener to avoid overlapping `/health` rules across services.
+- **calling-service user-issuer JWKS was unreachable.** It was mounted at root `/.well-known/jwks.json`, which the platform broker's higher-priority `/.well-known/*` listener rule intercepts. It now mounts under the IdP path (`${authPath}/.well-known/jwks.json`, i.e. `/auth/.well-known/jwks.json`), reachable via the calling-service's `/auth/*` rule and matching where the broker fetches it (`${USER_ISSUER_URL}/.well-known/jwks.json`).
+
+### Added
+
+- `modules/s2s-service/tests/alb_path_patterns.tftest.hcl` — asserts the list form populates the listener rule's `path_pattern.values`, and that providing neither / both fails validation. Guards against this drift recurring.
+
+### Note
+
+The earlier "502 on `/health`" symptom was a no-healthy-target 502 caused by the pre-v2.1.0 Dockerfile build failures (no image → empty target group). With v2.1.0's Dockerfile fix + this release's listener rule, `/health` now routes to a healthy calling-service task and returns 200.
+
 ## [2.1.0] — 2026-05-21
 
 Adds **VPC Lattice** as an opt-in service-to-service transport. When

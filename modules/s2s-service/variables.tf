@@ -114,7 +114,19 @@ variable "log_retention_days" {
 }
 
 variable "alb_path_pattern" {
-  type = string
+  description = "Single ALB listener-rule path match. Mutually exclusive with alb_path_patterns; exactly one of the two must be set."
+  type        = string
+  default     = null
+}
+
+variable "alb_path_patterns" {
+  description = "List of ALB listener-rule path matches (up to 5, OR'd in ONE listener rule). Mutually exclusive with alb_path_pattern; exactly one of the two must be set."
+  type        = list(string)
+  default     = null
+  validation {
+    condition     = (var.alb_path_pattern == null) != (var.alb_path_patterns == null)
+    error_message = "Set exactly one of alb_path_pattern (string) or alb_path_patterns (list(string)), not both and not neither."
+  }
 }
 
 variable "alb_listener_rule_priority" {

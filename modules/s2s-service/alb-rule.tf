@@ -1,3 +1,9 @@
+locals {
+  # Exactly one of alb_path_pattern / alb_path_patterns is non-null (enforced by
+  # the variable validation). Normalise to a single list used by the listener rule.
+  effective_alb_path_patterns = var.alb_path_patterns != null ? var.alb_path_patterns : [var.alb_path_pattern]
+}
+
 resource "aws_lb_target_group" "this" {
   name        = substr("${local.name_prefix}-tg", 0, 32)
   port        = var.container_port
@@ -25,7 +31,7 @@ resource "aws_lb_listener_rule" "this" {
   }
   condition {
     path_pattern {
-      values = [var.alb_path_pattern]
+      values = local.effective_alb_path_patterns
     }
   }
 

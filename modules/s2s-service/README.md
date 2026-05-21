@@ -27,7 +27,8 @@ The module API is **closed by design** (spec §4 decision #10). There is NO inpu
 | `desired_count` | number | no | `2` | |
 | `health_check_path` | string | no | `/health` | |
 | `log_retention_days` | number | no | `30` | |
-| `alb_path_pattern` | string | yes | — | ALB listener-rule match |
+| `alb_path_pattern` | string | conditional | `null` | Single ALB listener-rule path match. Mutually exclusive with `alb_path_patterns` — set exactly one |
+| `alb_path_patterns` | list(string) | conditional | `null` | List of ALB path matches (up to 5, OR'd into ONE listener rule). Mutually exclusive with `alb_path_pattern` — set exactly one |
 | `alb_listener_rule_priority` | number | yes | — | Must be unique per ALB listener |
 | `cedar_policies` | list(object) | no | `[]` | `{ name, statement, description? }` |
 | `outbound_audiences` | list(string) | no | `[]` | Bounded contexts this service calls |

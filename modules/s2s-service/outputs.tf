@@ -1,5 +1,6 @@
 output "service_url" {
-  value = "https://${var.platform.alb_dns_name}${trimsuffix(var.alb_path_pattern, "/*")}"
+  # Derived from the first effective path pattern (the primary route for the service).
+  value = "https://${var.platform.alb_dns_name}${trimsuffix(local.effective_alb_path_patterns[0], "/*")}"
 }
 
 output "ecr_repository_uri" {

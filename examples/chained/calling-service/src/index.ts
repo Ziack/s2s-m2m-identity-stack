@@ -67,7 +67,9 @@ async function main(): Promise<void> {
   app.get('/health', (_req, res) => res.json({ status: 'ok' }));
 
   // Mount the local IdP router at the path component of USER_ISSUER_URL so
-  // that the published `jwks_uri` matches where we serve it.
+  // that the published `jwks_uri` matches where we serve it. authRouter already
+  // serves the user-issuer JWKS at `${authPath}/.well-known/jwks.json`, which is
+  // exactly where the broker fetches it (`${USER_ISSUER_URL}/.well-known/jwks.json`).
   const authPath = issuerPathname(config.userIssuerUrl);
   app.use(
     authPath,
@@ -80,8 +82,11 @@ async function main(): Promise<void> {
     }),
   );
 
-  // DPoP-key JWKS (process-key, separate from the user issuer above).
-  app.use(jwksRouter());
+  // DPoP-key JWKS (process-key, separate from the user issuer above). Mounted
+  // under the same `${authPath}` prefix (not root) so it routes through the
+  // calling-service's `/auth/*` ALB rule instead of being intercepted by the
+  // platform broker's higher-priority `/.well-known/*` listener rule.
+  app.use(authPath, jwksRouter());
   app.use(metricsRouter());
 
   // From here down, routes require a valid user token. The middleware skips
