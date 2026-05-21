@@ -5,7 +5,6 @@
   "type": "module",
   "workspaces": [
     "packages/*",
-    "packages/examples/*",
     "examples/basic/*",
     "examples/chained/*",
     "examples/multi-context/*",
@@ -22,7 +21,6 @@
   },
   "scripts": {
     "build": "npm -ws run build",
-    "test": "npm -ws run test",
-    "infra:validate": "cd infrastructure/terraform && terraform fmt -check -recursive && terraform validate"
+    "test": "npm -ws run test"
   }
 }
