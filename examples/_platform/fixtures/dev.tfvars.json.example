@@ -1,0 +1,34 @@
+{
+  "account_id": "123456789012",
+  "region": "us-east-1",
+  "environment": "dev",
+
+  "vpc_id": "vpc-0123456789abcdef0",
+  "private_subnet_ids": [
+    "subnet-aaaaaaaaaaaaaaaaa",
+    "subnet-bbbbbbbbbbbbbbbbb"
+  ],
+  "alb_subnet_ids": [
+    "subnet-aaaaaaaaaaaaaaaaa",
+    "subnet-bbbbbbbbbbbbbbbbb"
+  ],
+
+  "bounded_contexts": ["lending"],
+
+  "user_issuer_url": "https://idp.example.com/realms/m2m",
+  "user_issuer_audience": "platform",
+
+  "broker_image_uri": "ghcr.io/ziack/s2s-token-broker:v2.0.2",
+  "broker_desired_count": 2,
+  "broker_signing_key_rotation_days": 90,
+  "broker_log_retention_days": 30,
+
+  "cognito_domain_prefix": "myorg-s2s-dev",
+
+  "enable_lattice": false,
+
+  "tags": {
+    "owner": "platform-team",
+    "cost-center": "engineering"
+  }
+}
