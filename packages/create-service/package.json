@@ -1,0 +1,37 @@
+{
+  "name": "@s2s/create-service",
+  "version": "0.1.0",
+  "description": "Scaffolder CLI for new S2S Identity Stack services",
+  "type": "module",
+  "bin": {
+    "create-service": "./bin/create-service.mjs"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "bin",
+    "templates"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node scripts/copy-template.mjs",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "tsc --noEmit"
+  },
+  "engines": { "node": ">=20.0.0" },
+  "dependencies": {
+    "@aws-sdk/client-ssm": "^3.600.0",
+    "cross-spawn": "^7.0.6",
+    "ejs": "^3.1.10",
+    "prompts": "^2.4.2"
+  },
+  "devDependencies": {
+    "@types/cross-spawn": "^6.0.6",
+    "@types/ejs": "^3.1.5",
+    "@types/node": "^20.12.0",
+    "@types/prompts": "^2.4.9",
+    "typescript": "^5.4.0",
+    "vitest": "^1.6.0"
+  }
+}
