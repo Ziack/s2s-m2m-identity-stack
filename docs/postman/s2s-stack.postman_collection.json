@@ -1,0 +1,262 @@
+{
+  "info": {
+    "name": "S2S Identity Stack — Happy Path",
+    "description": "Three-user × three-outcomes demo against a deployed S2S stack.\n\n**Prereqs:** platform + chained example services deployed. Set the `alb` collection variable to the ALB DNS name from `terraform output alb_dns_name`.\n\n**Flow:** each user's request runs Login → /demo/sync. The Login pre-request script captures the `user_token` into a folder-scoped variable; /demo/sync references it via `{{user_token}}`.\n\n**Expected outcomes:**\n- **alice** (loan-officer + reader): 200 OK; response includes `ledger.audit` with full actor_chain.\n- **bob** (auditor + reader): 502 with `error: downstream_unavailable` — receiving allows the loan but ledger denies the entry write.\n- **carol** (reader only): 403 with `error: authorization_denied` from receiving — Cedar denies upstream.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "alb", "value": "REPLACE_ME_WITH_ALB_DNS", "description": "ALB DNS from `terraform output alb_dns_name`. No trailing slash. Example: my-alb-1234.us-east-1.elb.amazonaws.com" },
+    { "key": "scheme", "value": "http", "description": "http for internal ALB; https when an ACM cert is wired" }
+  ],
+  "item": [
+    {
+      "name": "Sanity checks",
+      "item": [
+        {
+          "name": "GET /health (calling)",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{scheme}}://{{alb}}/health", "host": ["{{alb}}"], "path": ["health"] }
+          }
+        },
+        {
+          "name": "GET /.well-known/jwks.json (calling — user issuer JWKS)",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{scheme}}://{{alb}}/.well-known/jwks.json", "host": ["{{alb}}"], "path": [".well-known", "jwks.json"] }
+          }
+        },
+        {
+          "name": "GET /.well-known/openid-configuration (calling)",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{scheme}}://{{alb}}/.well-known/openid-configuration", "host": ["{{alb}}"], "path": [".well-known", "openid-configuration"] }
+          }
+        },
+        {
+          "name": "GET /auth/users (dev-only — list test users)",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{scheme}}://{{alb}}/auth/users", "host": ["{{alb}}"], "path": ["auth", "users"] }
+          }
+        },
+        {
+          "name": "GET /metrics (Prometheus)",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{scheme}}://{{alb}}/metrics", "host": ["{{alb}}"], "path": ["metrics"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Alice (loan-officer) — full ALLOW",
+      "description": "Alice has roles ['loan-officer', 'reader']. Cedar policies in BOTH `lending` (receiving) and `ledger` permit loan-officer to POST. Expect 200 with full chain in response.",
+      "item": [
+        {
+          "name": "1. POST /auth/login (alice)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const resp = pm.response.json();",
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('user_token present', () => pm.expect(resp.user_token).to.be.a('string').and.match(/^eyJ/));",
+                  "pm.collectionVariables.set('alice_token', resp.user_token);",
+                  "console.log('alice_token captured, expires_in:', resp.expires_in);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{ \"username\": \"alice\", \"password\": \"alice-pw\" }" },
+            "url": { "raw": "{{scheme}}://{{alb}}/auth/login", "host": ["{{alb}}"], "path": ["auth", "login"] }
+          }
+        },
+        {
+          "name": "2. POST /demo/sync (alice)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const resp = pm.response.json();",
+                  "pm.test('200 OK — full chain', () => pm.response.to.have.status(200));",
+                  "pm.test('user.sub = user-alice', () => pm.expect(resp.user.sub).to.eql('user-alice'));",
+                  "pm.test('ledger.audit.user_sub propagates user identity', () => {",
+                  "  pm.expect(resp.ledger).to.be.an('object');",
+                  "  pm.expect(resp.ledger.audit.user_sub).to.eql('user-alice');",
+                  "});",
+                  "pm.test('actor_chain shows full hop sequence', () => {",
+                  "  pm.expect(resp.ledger.audit.actor_chain).to.include('calling-service');",
+                  "  pm.expect(resp.ledger.audit.actor_chain).to.include('receiving-service-outbound');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{alice_token}}" },
+              { "key": "X-Correlation-Id", "value": "postman-alice-{{$timestamp}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{ \"loanId\": \"L-postman-alice-{{$timestamp}}\", \"amount\": 5000 }" },
+            "url": { "raw": "{{scheme}}://{{alb}}/demo/sync", "host": ["{{alb}}"], "path": ["demo", "sync"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Bob (auditor) — receiving ALLOW, ledger DENY",
+      "description": "Bob has roles ['auditor', 'reader']. Lending Cedar policy permits auditor to file loans. Ledger Cedar policy REQUIRES loan-officer for writes — bob is denied at the ledger. Expect receiving to return 502 with downstream_unavailable.",
+      "item": [
+        {
+          "name": "1. POST /auth/login (bob)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const resp = pm.response.json();",
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.collectionVariables.set('bob_token', resp.user_token);",
+                  "console.log('bob_token captured');"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{ \"username\": \"bob\", \"password\": \"bob-pw\" }" },
+            "url": { "raw": "{{scheme}}://{{alb}}/auth/login", "host": ["{{alb}}"], "path": ["auth", "login"] }
+          }
+        },
+        {
+          "name": "2. POST /demo/sync (bob — expect 502 downstream_unavailable)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('502 from receiving — ledger denied', () => pm.response.to.have.status(502));",
+                  "const resp = pm.response.json();",
+                  "pm.test('error code = downstream_unavailable', () => pm.expect(resp.error).to.eql('downstream_unavailable'));",
+                  "console.log('bob correctly rejected at ledger hop. error_description:', resp.error_description);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{bob_token}}" },
+              { "key": "X-Correlation-Id", "value": "postman-bob-{{$timestamp}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{ \"loanId\": \"L-postman-bob-{{$timestamp}}\", \"amount\": 1000 }" },
+            "url": { "raw": "{{scheme}}://{{alb}}/demo/sync", "host": ["{{alb}}"], "path": ["demo", "sync"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Carol (reader only) — receiving DENY",
+      "description": "Carol has roles ['reader']. Lending Cedar policy requires loan-officer OR auditor — carol has neither. Expect receiving to deny at the first hop with 403 authorization_denied.",
+      "item": [
+        {
+          "name": "1. POST /auth/login (carol)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const resp = pm.response.json();",
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.collectionVariables.set('carol_token', resp.user_token);",
+                  "console.log('carol_token captured');"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{ \"username\": \"carol\", \"password\": \"carol-pw\" }" },
+            "url": { "raw": "{{scheme}}://{{alb}}/auth/login", "host": ["{{alb}}"], "path": ["auth", "login"] }
+          }
+        },
+        {
+          "name": "2. POST /demo/sync (carol — expect 403 authorization_denied)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403 from receiving — no required role', () => pm.response.to.have.status(403));",
+                  "const resp = pm.response.json();",
+                  "pm.test('error code = authorization_denied', () => pm.expect(resp.error).to.eql('authorization_denied'));",
+                  "console.log('carol correctly denied at receiving. error_description:', resp.error_description);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{carol_token}}" },
+              { "key": "X-Correlation-Id", "value": "postman-carol-{{$timestamp}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{ \"loanId\": \"L-postman-carol-{{$timestamp}}\", \"amount\": 100 }" },
+            "url": { "raw": "{{scheme}}://{{alb}}/demo/sync", "host": ["{{alb}}"], "path": ["demo", "sync"] }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Bonus — async flow (alice)",
+      "description": "Tests the SQS envelope-signed async path. Calling-service signs a JWS envelope, publishes to SQS. Receiving-service consumer dequeues, verifies envelope + actor chain, processes.",
+      "item": [
+        {
+          "name": "POST /demo/async (alice)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('202 Accepted', () => pm.response.to.have.status(202));",
+                  "const resp = pm.response.json();",
+                  "pm.test('correlation_id returned for tracing', () => pm.expect(resp.correlation_id).to.be.a('string'));",
+                  "console.log('async accepted, correlation_id:', resp.correlation_id, '— check receiving-service CloudWatch logs for verification');"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" },
+              { "key": "Authorization", "value": "Bearer {{alice_token}}" },
+              { "key": "X-Correlation-Id", "value": "postman-async-alice-{{$timestamp}}" }
+            ],
+            "body": { "mode": "raw", "raw": "{ \"action\": \"loan.decision.submit\", \"payload\": { \"loanId\": \"L-async-{{$timestamp}}\", \"decision\": \"approved\" } }" },
+            "url": { "raw": "{{scheme}}://{{alb}}/demo/async", "host": ["{{alb}}"], "path": ["demo", "async"] }
+          }
+        }
+      ]
+    }
+  ]
+}
