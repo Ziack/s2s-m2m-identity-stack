@@ -30,7 +30,7 @@ export { createAuthorize } from './authz/authorize.js';
 export { createCedarLocal } from './authz/cedarLocal.js';
 export { signEnvelope } from './envelope/signEnvelope.js';
 export { createVerifyEnvelope, DEFAULT_STALENESS } from './envelope/verifyEnvelope.js';
-export { createAuthMiddleware } from './middleware.js';
+export { createAuthMiddleware, createBrokerAuthMiddleware, type BrokerAuthMode } from './middleware.js';
 export { buildBreaker } from './resilience/circuitBreaker.js';
 export { loadConfig } from './config.js';
 export { metrics } from './observability/metrics.js';
