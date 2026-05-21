@@ -160,18 +160,14 @@ moved {
 }
 ```
 
-### Hybrid broker (if `enable_hybrid_broker = true`)
+### Hybrid broker
 
-```hcl
-moved {
-  from = module.hybrid_broker.aws_ecs_service.hybrid
-  to   = module.s2s_platform.aws_ecs_service.hybrid_broker
-}
-moved {
-  from = module.hybrid_broker.aws_ecs_task_definition.hybrid
-  to   = module.s2s_platform.aws_ecs_task_definition.hybrid_broker
-}
-```
+The v1 `hybrid_broker` module is **not part of v2.0.x**. The on-premise translator (mTLS termination + Site-to-Site VPN + DynamoDB client_id mapping → Cognito M2M token + DPoP) is planned as a **separate sibling module** `modules/s2s-hybrid-broker/` in a future v2.x release, not as a feature flag on `s2s-platform`. This keeps the heavy Network Hub VPC + VPN gateway infra opt-in.
+
+If you ran v1 with `module.hybrid_broker.*` resources, you have two options:
+
+1. **Keep the v1 deployment running independently** until the v2.x sibling module ships. The v1 reference implementation is preserved at git tag `v1.0.0`.
+2. **Migrate the resources to a separate Terraform state** so they survive the v1 → v2 platform module switch. There is no `moved {}` rewrite for this — the resource topology changes when the new sibling module lands.
 
 ### Example services → s2s-service
 

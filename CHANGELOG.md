@@ -17,6 +17,20 @@ A single version line covers every artifact in the repo (see §9.1 of the design
 
 (Nothing yet.)
 
+## [2.0.1] — 2026-05-21
+
+### Removed
+
+- `modules/s2s-platform` — dead `enable_hybrid_broker` and `hybrid_broker_onprem_cidr` variables. They were declared but never consumed by any resource; setting them did nothing in v2.0.0. The hybrid-broker capability (mTLS-terminating translator for on-premise callers) is reserved for a future **separate sibling module** `modules/s2s-hybrid-broker/`, not a flag on `s2s-platform`. This keeps the heavy Network Hub VPC + Site-to-Site VPN + ECS infra opt-in deliberately.
+
+### Documentation
+
+- `modules/s2s-platform/README.md` — added "On-premise / hybrid callers" section explaining the planned sibling-module approach and pointing at the `v1.0.0` tag for the reference implementation
+- `docs/migration-from-v1.md` — clarified that v1's `hybrid_broker` does NOT migrate via `moved {}` blocks; consumers either keep the v1 deployment running independently or wait for the future sibling module
+- `docs/platform-deployment.md` — removed dead-variable row from the inputs table
+
+This is a **minor breaking** change only for anyone who explicitly set `enable_hybrid_broker = true` in v2.0.0 (which had no effect anyway). No state migration required.
+
 ## [2.0.0] — 2026-05-21
 
 First release of the modularised platform/service split. **This is a breaking

@@ -37,9 +37,21 @@ Do NOT use this module for per-service config — that belongs in `s2s-service`.
 | `broker_log_retention_days` | number | no | `30` | CloudWatch retention for broker logs |
 | `cognito_domain_prefix` | string | yes | — | **Globally unique** Cognito hosted domain |
 | `enable_lattice` | bool | no | `false` | Reserved for v2.x |
-| `enable_hybrid_broker` | bool | no | `false` | Reserved for v2.x |
-| `hybrid_broker_onprem_cidr` | string | no | `""` | Reserved |
 | `tags` | map(string) | no | `{}` | Tags merged onto every resource |
+
+## On-premise / hybrid callers
+
+The Hybrid Broker (mTLS-terminating translator for on-prem callers, with Site-to-Site VPN + DynamoDB client-id mapping) is **not in this module**. When the feature ships, it will be a **separate sibling module** `modules/s2s-hybrid-broker/` that opts in deliberately:
+
+```hcl
+module "hybrid_broker" {
+  source   = "github.com/Ziack/s2s-m2m-identity-stack//modules/s2s-hybrid-broker?ref=v2.x.x"
+  platform = module.platform.platform
+  # ... onprem_cidr, customer_gateway_ip, mtls_trust_chain_arn, mapping ... 
+}
+```
+
+Reference implementation: see git tag `v1.0.0` for the pre-modularization version (full Network Hub VPC + VPN + ECS + DynamoDB).
 
 ## Outputs
 

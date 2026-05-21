@@ -85,16 +85,6 @@ variable "enable_lattice" {
   default = false
 }
 
-variable "enable_hybrid_broker" {
-  type    = bool
-  default = false
-}
-
-variable "hybrid_broker_onprem_cidr" {
-  type    = string
-  default = ""
-}
-
 variable "tags" {
   type    = map(string)
   default = {}

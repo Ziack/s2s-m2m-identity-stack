@@ -32,7 +32,6 @@ Optional inputs (sensible defaults; see variables.tf for full list):
 | Input | Default | Notes |
 | --- | --- | --- |
 | `enable_lattice` | `false` | Provisions VPC Lattice service network |
-| `enable_hybrid_broker` | `false` | Cross-cloud broker for non-AWS workloads |
 | `broker_desired_count` | `2` | Fargate task count |
 | `valkey_node_type` | `"cache.t4g.small"` | ElastiCache instance |
 | `aws_region` | provider default | Inherited from provider block |
