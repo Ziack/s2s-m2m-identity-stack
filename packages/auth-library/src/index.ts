@@ -37,7 +37,7 @@ export { metrics } from './observability/metrics.js';
 export { getLogger, redact, truncateHash } from './observability/logger.js';
 export { withSpan, SPAN_NAMES } from './observability/tracing.js';
 export { getClientSecret, invalidateClientSecret } from './secrets.js';
-export { getRedisClient, buildRedis, pingRedis } from './redisClient.js';
+export { getRedisClient, buildRedis, pingRedis, setRedisClientForTest, resetRedisClientForTest } from './redisClient.js';
 export { jwksLastRefreshAt } from './validation/jwksManager.js';
 export { AuthError, ERROR_CODES, buildErrorBody, wwwAuthenticateHeader } from './errors.js';
 

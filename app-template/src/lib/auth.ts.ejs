@@ -9,6 +9,8 @@ export function buildAuthMiddleware(): RequestHandler {
     brokerAudience: config.BROKER_AUDIENCE,
     policyStoreId: config.AVP_POLICY_STORE_ID,
     resourcePrefix: '<%= boundedContext %>',
+    awsRegion: config.AWS_REGION,
+    redisEndpoint: config.REDIS_ENDPOINT,
     mode: config.SHADOW_MODE ? 'log-only' : 'enforce',
   });
 }

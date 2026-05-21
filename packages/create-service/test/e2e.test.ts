@@ -47,7 +47,7 @@ describe.skipIf(process.env.CI_SKIP_E2E === 'true')('e2e: scaffold + install + b
     expect(install.code, install.err).toBe(0);
 
     const build = await sh('npx', ['tsc', '--noEmit'], dst);
-    expect(build.code, build.err).toBe(0);
+    expect(build.code, build.err || build.out).toBe(0);
 
     const test = await sh('npm', ['test', '--silent'], dst);
     expect(test.code, test.err).toBe(0);

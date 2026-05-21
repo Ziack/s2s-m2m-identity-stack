@@ -2,6 +2,13 @@ import type { Request, Response, NextFunction, RequestHandler } from 'express';
 import { randomUUID } from 'node:crypto';
 import { AuthError, ERROR_CODES, buildErrorBody, wwwAuthenticateHeader, type ErrorCode } from './errors.js';
 import type { ValidatedToken, DPoPVerificationResult, AuthorizationResult } from './types.js';
+import { createJwksManager } from './validation/jwksManager.js';
+import { createValidateToken } from './validation/validateToken.js';
+import { createVerifyDPoP } from './dpop/verifyDPoP.js';
+import { createRedisNonceStore } from './dpop/dpopNonce.js';
+import { createAuthorize, type AvpClientLike } from './authz/authorize.js';
+import { createCedarLocal } from './authz/cedarLocal.js';
+import { getRedisClient } from './redisClient.js';
 
 export type BrokerAuthMode = 'log-only' | 'enforce';
 
@@ -120,14 +127,110 @@ export interface BrokerAuthConfig {
   brokerAudience: string;
   policyStoreId: string;
   resourcePrefix: string;
+  /** AWS region used to construct the VerifiedPermissionsClient. */
+  awsRegion: string;
+  /** ioredis endpoint used to back the DPoP nonce store + replay check. */
+  redisEndpoint: string;
   mode?: BrokerAuthMode;
   requireDPoP?: boolean;
+  /** Refresh interval for the JWKS cache. Default: 24h. */
+  jwksRefreshHours?: number;
+  /** DPoP nonce TTL (seconds). Default: 120. */
+  nonceTtlSeconds?: number;
+  /** Prefix used by the Redis DPoP nonce store keys. Default: 'dpop:nonce:'. */
+  nonceKeyPrefix?: string;
   logger?: AuthMiddlewareDeps['logger'];
   metrics?: AuthMiddlewareDeps['metrics'];
+  /** Test seam — override the JWKS fetcher. */
+  _fetchImpl?: typeof fetch;
+  /** Test seam — override the AVP client (bypass AWS SDK construction). */
+  _avpClient?: AvpClientLike;
 }
 
 function isBrokerAuthConfig(x: AuthMiddlewareDeps | BrokerAuthConfig): x is BrokerAuthConfig {
   return typeof (x as BrokerAuthConfig).brokerJwksUri === 'string';
+}
+
+function buildAvpClient(awsRegion: string): AvpClientLike {
+  // Lazy-load the AWS SDK so projects that supply `_avpClient` (tests) or
+  // never instantiate the high-level form never pay the import cost. We
+  // intentionally require() at call-time inside an async closure to keep the
+  // ESM build simple.
+  let send: ((cmd: unknown) => Promise<unknown>) | null = null;
+  let CommandCtor: (new (input: unknown) => unknown) | null = null;
+  async function lazyInit(): Promise<void> {
+    if (send && CommandCtor) return;
+    const mod = await import('@aws-sdk/client-verifiedpermissions');
+    const client = new mod.VerifiedPermissionsClient({ region: awsRegion });
+    send = (cmd: unknown) => (client as unknown as { send: (c: unknown) => Promise<unknown> }).send(cmd);
+    CommandCtor = mod.IsAuthorizedWithTokenCommand as unknown as new (input: unknown) => unknown;
+  }
+  return {
+    async isAuthorizedWithToken(input) {
+      await lazyInit();
+      const resp = (await send!(new CommandCtor!({
+        policyStoreId: input.PolicyStoreId,
+        accessToken: input.AccessToken,
+        identityToken: input.IdentityToken,
+        action: { actionType: input.Action.ActionType, actionId: input.Action.ActionId },
+        resource: { entityType: input.Resource.EntityType, entityId: input.Resource.EntityId },
+        ...(input.Context
+          ? { context: { contextMap: input.Context.ContextMap as Record<string, never> } }
+          : {}),
+      }))) as { decision?: string; determiningPolicies?: Array<{ policyId?: string }> };
+      return {
+        Decision: (resp.decision === 'ALLOW' ? 'ALLOW' : 'DENY') as 'ALLOW' | 'DENY',
+        DeterminingPolicies: (resp.determiningPolicies ?? []).map((p) => ({ PolicyId: p.policyId ?? '' })),
+      };
+    },
+  };
+}
+
+function wireBrokerAuthConfig(cfg: BrokerAuthConfig): AuthMiddlewareDeps {
+  const jwksManager = createJwksManager({
+    jwksUri: cfg.brokerJwksUri,
+    refreshHours: cfg.jwksRefreshHours ?? 24,
+    ...(cfg._fetchImpl !== undefined ? { fetchImpl: cfg._fetchImpl } : {}),
+  });
+  const validateToken = createValidateToken({
+    jwksManager,
+    expectedIssuer: cfg.brokerIssuer,
+  });
+
+  const redis = getRedisClient(cfg.redisEndpoint);
+  const nonceStore = createRedisNonceStore({
+    redis,
+    ttlSeconds: cfg.nonceTtlSeconds ?? 300,
+    prefix: cfg.nonceKeyPrefix ?? 'dpop:nonce:',
+  });
+  const verifyDPoP = createVerifyDPoP({
+    redis,
+    nonceStore,
+    requireNonce: true,
+    ...(cfg.nonceTtlSeconds !== undefined ? { nonceTtlSeconds: cfg.nonceTtlSeconds } : {}),
+  });
+
+  const avpClient = cfg._avpClient ?? buildAvpClient(cfg.awsRegion);
+  const cedarLocal = createCedarLocal([]);
+  const authorize = createAuthorize({
+    mode: 'avp_api',
+    policyStoreId: cfg.policyStoreId,
+    avpClient,
+    cedarLocal,
+    fallbackToLocal: false,
+  });
+
+  return {
+    expectedAudience: cfg.brokerAudience,
+    resourcePrefix: cfg.resourcePrefix,
+    validateToken,
+    verifyDPoP,
+    authorize,
+    requireDPoP: cfg.requireDPoP ?? true,
+    ...(cfg.mode !== undefined ? { mode: cfg.mode } : {}),
+    ...(cfg.logger !== undefined ? { logger: cfg.logger } : {}),
+    ...(cfg.metrics !== undefined ? { metrics: cfg.metrics } : {}),
+  };
 }
 
 /**
@@ -142,30 +245,7 @@ function isBrokerAuthConfig(x: AuthMiddlewareDeps | BrokerAuthConfig): x is Brok
  */
 export function createBrokerAuthMiddleware(input: AuthMiddlewareDeps | BrokerAuthConfig): RequestHandler {
   if (isBrokerAuthConfig(input)) {
-    // High-level form. Concrete wiring of jwksManager/AVP client is provisioned
-    // by the service's runtime bootstrap (see app-template `src/lib/auth.ts`);
-    // the template-level stub here defers actual network calls until first
-    // request — at which point a `validateToken`/`authorize` must have been
-    // injected via {@link replaceBrokerAuthDeps}. The bare stub still lets the
-    // scaffolded project compile and pass mocked tests.
-    const stubDeps: AuthMiddlewareDeps = {
-      expectedAudience: input.brokerAudience,
-      resourcePrefix: input.resourcePrefix,
-      validateToken: async () => {
-        throw new AuthError(401, ERROR_CODES.INVALID_TOKEN,
-          'broker-auth middleware not fully wired: provide jwksManager/AVP client at runtime');
-      },
-      verifyDPoP: async () => {
-        throw new AuthError(401, ERROR_CODES.INVALID_DPOP_PROOF,
-          'broker-auth middleware not fully wired: provide verifyDPoP at runtime');
-      },
-      authorize: async () => ({ decision: 'DENY' as const, reasons: ['broker-auth middleware not fully wired'], evaluationTimeMs: 0, mode: 'api' as const }),
-      requireDPoP: input.requireDPoP ?? false,
-      ...(input.mode !== undefined ? { mode: input.mode } : {}),
-      ...(input.logger !== undefined ? { logger: input.logger } : {}),
-      ...(input.metrics !== undefined ? { metrics: input.metrics } : {}),
-    };
-    return createAuthMiddleware(stubDeps);
+    return createAuthMiddleware(wireBrokerAuthConfig(input));
   }
   return createAuthMiddleware(input);
 }
