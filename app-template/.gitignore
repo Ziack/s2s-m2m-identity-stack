@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.terraform/
+.terraform.lock.hcl
+terraform.tfstate*
+*.tsbuildinfo
+.env
+.env.*
