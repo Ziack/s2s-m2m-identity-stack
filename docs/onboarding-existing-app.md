@@ -50,7 +50,71 @@ app.use('/api', createBrokerAuthMiddleware({
 
 ## Phase 3 — Outbound calls
 
-_To be filled in subsequent task._
+For each downstream the app currently calls, follow these three steps. Skip this phase if the app has no outbound calls.
+
+**1. Identify the target's `bounded_context`.** The platform team maintains the registry of bounded contexts. Find the downstream's entry; if it is not yet on S2S, defer migration of this outbound call until it is.
+
+**2. Replace the existing auth with the SDK's exchange flow.**
+
+```ts
+import { createExchangeToken, signDPoP, getClientSecret } from '@s2s/auth-library';
+
+const exchangeForLedger = createExchangeToken({
+  brokerUrl: process.env.BROKER_TOKEN_ENDPOINT!,
+  actorClientId: process.env.COGNITO_CLIENT_ID!,
+  actorClientSecret: () => getClientSecret(process.env.COGNITO_CLIENT_SECRET_ARN!),
+  audience: 'ledger',
+  scope: ['ledger/write'],
+});
+
+const exchanged = await exchangeForLedger({
+  subjectToken: req.headers.authorization!.split(' ')[1],
+});
+
+const dpop = await signDPoP({
+  accessToken: exchanged.accessToken,
+  htm: 'POST',
+  htu: `${config.LEDGER_URL}/api/ledger/entries`,
+});
+
+await fetch(`${config.LEDGER_URL}/api/ledger/entries`, {
+  method: 'POST',
+  headers: {
+    authorization: `DPoP ${exchanged.accessToken}`,
+    dpop: dpop.proof,
+    'content-type': 'application/json',
+  },
+  body: JSON.stringify(payload),
+});
+```
+
+**3. Wrap with `withDPoPNonceRetry`.** The downstream server may require a server-issued DPoP nonce. The wrapper retries exactly once when the server replies with `WWW-Authenticate: DPoP nonce=...`.
+
+```ts
+import { withDPoPNonceRetry } from '@s2s/auth-library';
+
+return withDPoPNonceRetry(async (nonce) => {
+  const dpop = await signDPoP({
+    accessToken: exchanged.accessToken,
+    htm: 'POST',
+    htu: `${config.LEDGER_URL}/api/ledger/entries`,
+    nonce,
+  });
+  return fetch(`${config.LEDGER_URL}/api/ledger/entries`, {
+    method: 'POST',
+    headers: {
+      authorization: `DPoP ${exchanged.accessToken}`,
+      dpop: dpop.proof,
+      'content-type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+});
+```
+
+If the downstream is on S2S already, this is a drop-in replacement. If it isn't, keep both code paths behind a feature flag and revisit after target onboarding — don't get stuck in dual-mode forever (see anti-patterns).
+
+**Acceptance criteria.** Phase 3 complete when (1) every outbound call uses `createExchangeToken` + `signDPoP` + `withDPoPNonceRetry`, (2) no bespoke per-target auth code remains, and (3) integration tests against the downstream still pass.
 
 ## Phase 4 — Container migration
 
