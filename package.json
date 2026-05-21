@@ -6,7 +6,6 @@
   "workspaces": [
     "packages/*",
     "packages/examples/*",
-    "packages/services/*",
     "examples/basic/*",
     "examples/chained/*",
     "examples/multi-context/*",

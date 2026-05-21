@@ -3,7 +3,7 @@ FROM node:20-alpine AS builder
 WORKDIR /repo
 COPY package.json package-lock.json tsconfig.base.json ./
 COPY packages/auth-library ./packages/auth-library
-COPY packages/services/token-broker ./packages/services/token-broker
+COPY packages/token-broker ./packages/token-broker
 RUN npm ci --workspaces --include-workspace-root
 RUN npm --workspace @s2s/auth-library run build
 RUN npm --workspace @s2s/token-broker run build
@@ -20,5 +20,5 @@ ENV PORT=3000
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD wget -qO- http://127.0.0.1:3000/health || exit 1
-WORKDIR /app/packages/services/token-broker
+WORKDIR /app/packages/token-broker
 CMD ["node", "dist/index.js"]
