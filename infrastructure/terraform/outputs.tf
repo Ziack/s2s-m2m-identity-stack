@@ -81,3 +81,37 @@ output "secrets_receiving_outbound_arn" {
 output "avp_ledger_policy_store_id" {
   value = module.avp.ledger_policy_store_id
 }
+
+# --- Token broker / user issuer (Phase 6) -----------------------------------
+
+output "broker_url" {
+  value = module.token_broker.broker_url
+}
+
+output "broker_token_endpoint" {
+  value = module.token_broker.broker_token_endpoint
+}
+
+output "broker_jwks_uri" {
+  value = module.token_broker.broker_jwks_uri
+}
+
+output "broker_issuer" {
+  value = module.token_broker.broker_issuer
+}
+
+output "broker_signing_key_secret_arn" {
+  value = module.token_broker.signing_key_secret_arn
+}
+
+output "broker_actor_catalog_secret_arn" {
+  value = module.token_broker.actor_catalog_secret_arn
+}
+
+output "user_issuer_signing_secret_arn" {
+  value = module.secrets.user_issuer_signing_secret_arn
+}
+
+output "ecr_broker_uri" {
+  value = module.ecr.broker_repo_uri
+}
