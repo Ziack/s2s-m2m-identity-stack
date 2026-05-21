@@ -1,0 +1,5 @@
+{
+  "name": "internal",
+  "bounded_context": "platform-internal",
+  "version": "<v1.0 pinned version>"
+}
