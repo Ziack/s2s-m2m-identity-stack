@@ -14,6 +14,7 @@ vi.mock('../../src/lib/exchangeClient.js', () => ({
 }));
 
 import { syncRouter } from '../../src/routes/sync.js';
+import { __setLatticeFetchForTest } from '../../src/lib/latticeFetch.js';
 
 const fetchMock = vi.fn();
 vi.stubGlobal('fetch', fetchMock);
@@ -64,6 +65,8 @@ function buildApp(user: Parameters<typeof injectUser>[0] = { sub: 'user-alice', 
 beforeEach(() => {
   fetchMock.mockReset();
   exchangeMock.mockReset();
+  delete process.env.USE_LATTICE;
+  __setLatticeFetchForTest(null);
 });
 
 describe('POST /demo/sync (user-auth + token-exchange)', () => {
@@ -122,6 +125,50 @@ describe('POST /demo/sync (user-auth + token-exchange)', () => {
     expect(res.status).toBe(502);
     expect(res.body.error).toBe('downstream_unavailable');
     expect(res.body.error_description).toContain('broker rejected exchange');
+  });
+
+  it('Lattice mode: SigV4-signs to receiving Lattice DNS with token in X-DPoP-Token', async () => {
+    process.env.USE_LATTICE = 'true';
+    const latticeMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ loanId: 'L-lattice' }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+    __setLatticeFetchForTest(latticeMock);
+    exchangeMock.mockResolvedValue({
+      accessToken: 'exchanged-token',
+      expiresAt: Math.floor(Date.now() / 1000) + 300,
+      tokenType: 'DPoP',
+      issuedTokenType: 'urn:ietf:params:oauth:token-type:access_token',
+      scopes: ['lending/write'],
+    });
+
+    const latticeCfg = { ...cfg, receivingLatticeDns: 'receiving-abc.vpc-lattice-svcs.us-east-1.on.aws' };
+    const app = express();
+    app.use(express.json());
+    app.use(injectUser({ sub: 'user-alice', roles: ['loan-officer'], groups: [], claims: {}, issuer: 'http://test/auth' }));
+    app.use((req, _res, next) => { req.headers.authorization = 'Bearer fake-user-token'; next(); });
+    app.use('/demo', syncRouter(latticeCfg as unknown as Parameters<typeof syncRouter>[0]));
+
+    const res = await request(app).post('/demo/sync').send({ amount: 1000 });
+    expect(res.status).toBe(200);
+    expect(res.body.downstream).toEqual({ loanId: 'L-lattice' });
+    // Global fetch must NOT be used in Lattice mode.
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(latticeMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        url: 'https://receiving-abc.vpc-lattice-svcs.us-east-1.on.aws/api/loans',
+        method: 'POST',
+        headers: expect.objectContaining({
+          'X-DPoP-Token': 'exchanged-token',
+          'dpop': 'fake-dpop-proof',
+        }),
+      }),
+    );
+    // Access token must NOT be in Authorization (SigV4 owns it).
+    const sentHeaders = latticeMock.mock.calls[0][0].headers as Record<string, string>;
+    expect(sentHeaders['authorization']).toBeUndefined();
   });
 
   it('retries once on DPoP nonce challenge', async () => {

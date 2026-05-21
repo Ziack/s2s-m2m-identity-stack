@@ -7,6 +7,7 @@
  * real factory via `setExchangeTokenForTest`.
  */
 import { createExchangeToken, getClientSecret, type ExchangeTokenFn } from '@s2s/auth-library';
+import { latticeFetchAdapter, useLattice } from './latticeFetch.js';
 import type { CallingServiceConfig } from '../config.js';
 
 let exchangeFn: ExchangeTokenFn | null = null;
@@ -17,8 +18,16 @@ export function setExchangeTokenForTest(fn: ExchangeTokenFn | null): void {
 
 export function initExchangeClient(config: CallingServiceConfig): void {
   if (exchangeFn) return;
+  // Lattice mode: hit the broker's Lattice DNS and SigV4-sign the exchange via
+  // the lattice fetch adapter. Otherwise use the broker token endpoint over the
+  // default fetch (ALB path).
+  const lattice = useLattice() && !!config.brokerLatticeDns;
+  const brokerUrl = lattice
+    ? `https://${config.brokerLatticeDns}${new URL(config.brokerTokenEndpoint).pathname}`
+    : config.brokerTokenEndpoint;
   exchangeFn = createExchangeToken({
-    brokerUrl: config.brokerTokenEndpoint,
+    brokerUrl,
+    ...(lattice ? { fetchImpl: latticeFetchAdapter(config.awsRegion) } : {}),
     actorClientId: config.brokerActorClientId,
     actorClientSecret: async () => {
       const raw = await getClientSecret(config.brokerActorSecretArn, config.awsRegion);

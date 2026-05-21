@@ -1,6 +1,7 @@
 import { Router, type Request, type Response as ExpressResponse } from 'express';
 import { signDPoP } from '../lib/authClient.js';
 import { getExchangeToken } from '../lib/exchangeClient.js';
+import { postDownstream, useLattice } from '../lib/latticeFetch.js';
 import type { CallingServiceConfig } from '../config.js';
 
 /**
@@ -20,7 +21,12 @@ export function syncRouter(config: CallingServiceConfig): Router {
   const router = Router();
 
   router.post('/sync', async (req: Request, res: ExpressResponse) => {
-    const receivingBase = config.receivingServiceUrl || config.targetBaseUrl;
+    // Lattice mode: target receiving's Lattice DNS so SigV4 + DPoP htu both bind
+    // to the Lattice URL. Otherwise fall back to the ALB base URL (legacy path).
+    const lattice = useLattice() && !!config.receivingLatticeDns;
+    const receivingBase = lattice
+      ? `https://${config.receivingLatticeDns}`
+      : (config.receivingServiceUrl || config.targetBaseUrl);
     const htu = `${receivingBase}/api/loans`;
     const user = req.user;
     if (!user) {
@@ -54,16 +60,16 @@ export function syncRouter(config: CallingServiceConfig): Router {
         };
         if (nonce) dpopOpts.nonce = nonce;
         const dpop = await signDPoP(dpopOpts);
-        return fetch(htu, {
-          method: 'POST',
-          headers: {
-            'authorization': `DPoP ${exchanged.accessToken}`,
-            'dpop': dpop.proof,
-            'content-type': 'application/json',
+        return postDownstream({
+          config,
+          url: htu,
+          accessToken: exchanged.accessToken,
+          dpopProof: dpop.proof,
+          body: JSON.stringify(req.body),
+          extraHeaders: {
             'x-correlation-id': req.header('x-correlation-id') ?? req.header('x-request-id') ?? '',
             'x-user-sub': userSub,
           },
-          body: JSON.stringify(req.body),
         });
       }
 
