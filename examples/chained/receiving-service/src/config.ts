@@ -25,6 +25,11 @@ export interface ReceivingServiceConfig {
   brokerAudience: string;
   /** Broker token-exchange endpoint used for outbound calls to ledger. */
   brokerTokenEndpoint: string;
+  // Phase 4: VPC Lattice outbound (SigV4). When useLattice is true, outbound
+  // calls target the *LatticeDns endpoints and are SigV4-signed.
+  useLattice: boolean;
+  ledgerLatticeDns: string;
+  brokerLatticeDns: string;
 }
 
 function requireEnv(name: string): string {
@@ -58,5 +63,8 @@ export function loadConfig(): ReceivingServiceConfig {
     brokerIssuer: process.env.BROKER_ISSUER ?? '',
     brokerAudience: process.env.BROKER_AUDIENCE ?? 'receiving',
     brokerTokenEndpoint: process.env.BROKER_TOKEN_ENDPOINT ?? '',
+    useLattice: (process.env.USE_LATTICE ?? '').toLowerCase() === 'true',
+    ledgerLatticeDns: process.env.LEDGER_LATTICE_DNS ?? '',
+    brokerLatticeDns: process.env.BROKER_LATTICE_DNS ?? '',
   };
 }

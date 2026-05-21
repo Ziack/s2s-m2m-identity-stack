@@ -18,9 +18,11 @@ import {
   signDPoP,
   createExchangeToken,
   getClientSecret,
+  DPOP_TOKEN_HEADER,
   type ExchangeTokenFn,
   type ExchangeTokenResult,
 } from '@s2s/auth-library';
+import { latticeFetchAdapter, getLatticeFetch, useLattice, __setLatticeFetchForTest } from './latticeFetch.js';
 import type { ReceivingServiceConfig } from '../config.js';
 
 export class LedgerOutboundError extends Error {
@@ -53,13 +55,20 @@ export function __resetLedgerClient(): void {
   exchangeFn = null;
   configRef = null;
   fetchImpl = fetch;
+  __setLatticeFetchForTest(null);
 }
 
 async function ensureExchange(config: ReceivingServiceConfig): Promise<ExchangeTokenFn> {
   if (exchangeFn) return exchangeFn;
   configRef = config;
+  // Lattice mode: hit the broker's Lattice DNS and SigV4-sign the exchange.
+  const lattice = useLattice() && !!config.brokerLatticeDns;
+  const brokerUrl = lattice
+    ? `https://${config.brokerLatticeDns}${new URL(config.brokerTokenEndpoint).pathname}`
+    : config.brokerTokenEndpoint;
   exchangeFn = createExchangeToken({
-    brokerUrl: config.brokerTokenEndpoint,
+    brokerUrl,
+    ...(lattice ? { fetchImpl: latticeFetchAdapter(config.awsRegion) } : {}),
     actorClientId: config.ledgerOutboundClientId,
     actorClientSecret: async () => {
       const raw = await getClientSecret(config.ledgerOutboundSecretArn, config.awsRegion);
@@ -113,7 +122,12 @@ export async function postLedgerEntry(
   }
   const exchange = await ensureExchange(config);
   const exchanged: ExchangeTokenResult = await exchange({ subjectToken: args.subjectToken });
-  const htu = `${config.ledgerServiceUrl}/api/ledger/entries`;
+  // Lattice mode: target ledger's Lattice DNS so SigV4 + DPoP htu both bind to
+  // the Lattice URL; otherwise the ALB service URL (legacy path).
+  const lattice = useLattice() && !!config.ledgerLatticeDns;
+  const ledgerBase = lattice ? `https://${config.ledgerLatticeDns}` : config.ledgerServiceUrl;
+  const htu = `${ledgerBase}/api/ledger/entries`;
+  const body = JSON.stringify(args.payload);
 
   async function attempt(nonce?: string): Promise<Response> {
     const dpopOpts: { accessToken: string; htm: string; htu: string; nonce?: string } = {
@@ -123,15 +137,24 @@ export async function postLedgerEntry(
     };
     if (nonce) dpopOpts.nonce = nonce;
     const dpop = await signDPoP(dpopOpts);
+    const baseHeaders: Record<string, string> = {
+      'dpop': dpop.proof,
+      'x-correlation-id': args.correlationId,
+      'content-type': 'application/json',
+    };
+    if (lattice) {
+      // SigV4 owns Authorization; DPoP-bound token rides in X-DPoP-Token.
+      return getLatticeFetch(config.awsRegion)({
+        url: htu,
+        method: 'POST',
+        headers: { ...baseHeaders, [DPOP_TOKEN_HEADER]: exchanged.accessToken },
+        body,
+      });
+    }
     return fetchImpl(htu, {
       method: 'POST',
-      headers: {
-        'authorization': `DPoP ${exchanged.accessToken}`,
-        'dpop': dpop.proof,
-        'x-correlation-id': args.correlationId,
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify(args.payload),
+      headers: { ...baseHeaders, 'authorization': `DPoP ${exchanged.accessToken}` },
+      body,
     });
   }
 

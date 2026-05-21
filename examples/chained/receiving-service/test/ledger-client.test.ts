@@ -6,6 +6,7 @@ import {
   __setFetchImpl,
   __resetLedgerClient,
 } from '../src/lib/ledgerClient.js';
+import { __setLatticeFetchForTest } from '../src/lib/latticeFetch.js';
 
 const signedProofs: string[] = [];
 const signedNonces: Array<string | undefined> = [];
@@ -21,6 +22,10 @@ vi.mock('@s2s/auth-library', () => ({
   // preset via `__setExchangeFn`. Tests inject a double directly.
   createExchangeToken: () => async () => ({ accessToken: 'tok-default', expiresAt: 0, tokenType: 'DPoP', issuedTokenType: 'urn:ietf:params:oauth:token-type:access_token', scopes: ['ledger/write'] }),
   getClientSecret: vi.fn(async () => JSON.stringify({ client_secret: 'shh' })),
+  // Lattice surface consumed by src/lib/latticeFetch.ts. createLatticeFetch is
+  // unused in tests (we inject via __setLatticeFetchForTest), but must exist.
+  createLatticeFetch: () => async () => new Response('{}', { status: 200 }),
+  DPOP_TOKEN_HEADER: 'X-DPoP-Token',
 }));
 
 const cfg = {
@@ -59,6 +64,7 @@ describe('postLedgerEntry', () => {
   beforeEach(() => {
     signedProofs.length = 0;
     signedNonces.length = 0;
+    delete process.env.USE_LATTICE;
     __resetLedgerClient();
   });
 
@@ -92,6 +98,34 @@ describe('postLedgerEntry', () => {
     expect(headers['x-correlation-id']).toBe('corr-1');
     expect(headers['content-type']).toBe('application/json');
     expect((init as RequestInit).body).toBe(JSON.stringify({ loanId: 'L-aaa', amount: 100 }));
+  });
+
+  it('Lattice mode: SigV4-signs to ledger Lattice DNS with token in X-DPoP-Token', async () => {
+    process.env.USE_LATTICE = 'true';
+    __setExchangeFn(async () => ({
+      accessToken: 'tok-lattice', expiresAt: 0, tokenType: 'DPoP' as const,
+      issuedTokenType: 'urn:ietf:params:oauth:token-type:access_token', scopes: ['ledger/write'],
+    }));
+    const latticeMock = vi.fn(async () => jsonResponse(201, { entryId: 'E-L', status: 'committed' }));
+    __setLatticeFetchForTest(latticeMock as never);
+    const plainFetch = vi.fn(async () => jsonResponse(500, {}));
+    __setFetchImpl(plainFetch as unknown as typeof fetch);
+
+    const latticeCfg = { ...cfg, ledgerLatticeDns: 'ledger-xyz.vpc-lattice-svcs.us-east-1.on.aws' };
+    const result = await postLedgerEntry(latticeCfg, {
+      correlationId: 'corr-L',
+      payload: { loanId: 'L-lat' },
+      subjectToken: 'inbound-lat',
+    });
+
+    expect(result.entryId).toBe('E-L');
+    expect(plainFetch).not.toHaveBeenCalled();
+    expect(latticeMock).toHaveBeenCalledTimes(1);
+    const sent = latticeMock.mock.calls[0]![0] as { url: string; method: string; headers: Record<string, string> };
+    expect(sent.url).toBe('https://ledger-xyz.vpc-lattice-svcs.us-east-1.on.aws/api/ledger/entries');
+    expect(sent.headers['X-DPoP-Token']).toBe('tok-lattice');
+    expect(sent.headers.authorization).toBeUndefined();
+    expect(sent.headers.dpop).toBe('proof-1');
   });
 
   it('throws if subjectToken is missing — cannot propagate user identity', async () => {
