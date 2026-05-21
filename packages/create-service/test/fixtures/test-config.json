@@ -1,0 +1,10 @@
+{
+  "serviceName": "svc-e2e",
+  "boundedContext": "lending",
+  "scopes": ["lending/read", "lending/write"],
+  "containerPort": 3000,
+  "albPathPattern": "/api/svc-e2e/*",
+  "environment": "dev",
+  "outboundAudiences": [],
+  "generateSampleCedar": true
+}
