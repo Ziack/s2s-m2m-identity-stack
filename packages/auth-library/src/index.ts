@@ -41,6 +41,16 @@ export { getClientSecret, invalidateClientSecret } from './secrets.js';
 export { getRedisClient, buildRedis, pingRedis, setRedisClientForTest, resetRedisClientForTest } from './redisClient.js';
 export { jwksLastRefreshAt } from './validation/jwksManager.js';
 export { AuthError, ERROR_CODES, buildErrorBody, wwwAuthenticateHeader } from './errors.js';
+export {
+  createLatticeFetch,
+  LATTICE_SIGNING_SERVICE,
+  DPOP_TOKEN_HEADER,
+} from './lattice/sigv4Client.js';
+export type {
+  LatticeFetchOptions,
+  LatticeRequestInput,
+  LatticeFetchFn,
+} from './lattice/sigv4Client.js';
 
 export type {
   TokenResult,
