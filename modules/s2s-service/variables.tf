@@ -23,6 +23,14 @@ variable "platform" {
     private_subnet_ids         = list(string)
     policy_store_id            = string
     resource_server_identifier = string
+    # --- VPC Lattice plane (Phase 2 platform fields) ---
+    # Optional with safe defaults so existing consumers that assemble the
+    # platform object without these fields keep validating AND keep Lattice
+    # OFF (zero behavior change). The platform composite output always sets
+    # all three; SSM-assembled consumers may add them later (Phase 4).
+    enable_lattice             = optional(bool, false)
+    lattice_service_network_id = optional(string)
+    broker_lattice_dns         = optional(string)
     sidecars = optional(list(object({
       name             = string
       image            = string
@@ -125,6 +133,40 @@ variable "cedar_policies" {
 variable "outbound_audiences" {
   type    = list(string)
   default = []
+}
+
+variable "register_with_lattice" {
+  description = <<-EOT
+    Register THIS service with VPC Lattice (own Lattice service + IP target group +
+    listener + auth policy + ECS-managed target registration). Only takes effect
+    when var.platform.enable_lattice is also true. Defaults true so a Lattice-enabled
+    platform registers every service by default; set false to opt a single service out
+    while leaving it reachable over the ALB only.
+  EOT
+  type        = bool
+  default     = true
+}
+
+variable "lattice_allowed_caller_arns" {
+  description = <<-EOT
+    Optional list of principal (IAM role) ARNs allowed to invoke this service's
+    Lattice service. When empty (default) the auth policy allows any principal in
+    THIS account (network-layer defense-in-depth; DPoP + Cedar provide real authZ).
+    When non-empty, the auth policy is tightened to ONLY these principal ARNs.
+  EOT
+  type        = list(string)
+  default     = []
+}
+
+variable "calls_broker" {
+  description = <<-EOT
+    Whether this service makes outbound SigV4-signed calls to the broker (token
+    exchange). Defaults true — every service exchanges actor credentials at the
+    broker. Together with outbound_audiences this gates the task-role
+    vpc-lattice-svcs:Invoke statement.
+  EOT
+  type        = bool
+  default     = true
 }
 
 variable "env" {
