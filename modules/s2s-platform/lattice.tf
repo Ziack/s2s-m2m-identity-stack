@@ -181,3 +181,45 @@ resource "aws_vpclattice_auth_policy" "broker" {
   resource_identifier = aws_vpclattice_service.broker[0].arn
   policy              = data.aws_iam_policy_document.broker_lattice_auth[0].json
 }
+
+# --- IAM for ECS-managed Lattice target registration -----------------------
+
+# ECS registers/deregisters the broker tasks' IPs with the Lattice target group.
+# It assumes this role to call vpc-lattice:RegisterTargets / DeregisterTargets.
+data "aws_iam_policy_document" "broker_lattice_infra_assume" {
+  count = local.lattice_enabled
+  statement {
+    actions = ["sts:AssumeRole"]
+    principals {
+      type        = "Service"
+      identifiers = ["ecs.amazonaws.com"]
+    }
+  }
+}
+
+resource "aws_iam_role" "broker_lattice_infra" {
+  count              = local.lattice_enabled
+  name               = "${local.name_prefix}-broker-lt-infra"
+  assume_role_policy = data.aws_iam_policy_document.broker_lattice_infra_assume[0].json
+  tags               = local.common_tags
+}
+
+data "aws_iam_policy_document" "broker_lattice_infra" {
+  count = local.lattice_enabled
+  statement {
+    actions = [
+      "vpc-lattice:RegisterTargets",
+      "vpc-lattice:DeregisterTargets",
+      "vpc-lattice:ListTargets",
+      "vpc-lattice:GetTargetGroup",
+      "vpc-lattice:ListTargetGroups",
+    ]
+    resources = ["*"]
+  }
+}
+
+resource "aws_iam_role_policy" "broker_lattice_infra" {
+  count  = local.lattice_enabled
+  role   = aws_iam_role.broker_lattice_infra[0].id
+  policy = data.aws_iam_policy_document.broker_lattice_infra[0].json
+}

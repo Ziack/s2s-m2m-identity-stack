@@ -79,7 +79,7 @@ resource "aws_ecs_task_definition" "broker" {
       readonlyRootFilesystem = true
       user                   = "1000:1000"
       linuxParameters        = { capabilities = { add = [], drop = ["ALL"] } }
-      portMappings           = [{ containerPort = 8080, protocol = "tcp" }]
+      portMappings           = [{ name = "broker-8080", containerPort = 8080, protocol = "tcp" }]
       environment = [
         { name = "BROKER_ISSUER_URL", value = local.broker_base_url },
         { name = "BROKER_SIGNING_KEY_SECRET_ARN", value = aws_secretsmanager_secret.broker_signing.arn },
@@ -178,6 +178,18 @@ resource "aws_ecs_service" "broker" {
     target_group_arn = aws_lb_target_group.broker.arn
     container_name   = "broker"
     container_port   = 8080
+  }
+
+  # Register the broker tasks with the Lattice IP target group. Gated on
+  # enable_lattice: when disabled the broker is ALB-only (v2.0.x behavior).
+  # ECS assumes broker_lattice_infra to (de)register task IPs with Lattice.
+  dynamic "vpc_lattice_configurations" {
+    for_each = var.enable_lattice ? [1] : []
+    content {
+      role_arn         = aws_iam_role.broker_lattice_infra[0].arn
+      target_group_arn = aws_vpclattice_target_group.broker[0].arn
+      port_name        = "broker-8080"
+    }
   }
 
   tags = local.common_tags
