@@ -67,6 +67,12 @@ schema attribute); existing `dpop_confirmed` policies are unchanged.
   `ActionType=M2M`; it now splits on the last `::` (matching `splitResource`).
 - The async consumer no longer calls `IsAuthorizedWithToken` with an empty token
   (which always errored); it uses entity-based `IsAuthorized`.
+- **Decision cache now keys on the context.** `createAuthorize`'s 30s decision
+  cache previously keyed only on `principal:action:resource`, so two requests
+  with the same principal/action/resource but different security-decisive context
+  (`user.roles`, `scopes`, `envelope_verified`, …) could share a cached ALLOW —
+  an authorization-bypass window. The cache key now includes a canonical
+  (sorted-key) SHA-256 hash of the context.
 
 ### Changed
 

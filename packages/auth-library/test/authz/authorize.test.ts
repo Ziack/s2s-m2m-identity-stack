@@ -102,3 +102,56 @@ describe('createAuthorize — entity mode + STRICT encoding', () => {
     expect(res.reasons).toEqual(['p9']);
   });
 });
+
+describe('createAuthorize — decision cache keys on context', () => {
+  it('does NOT share a cached decision across differing context.user.roles', async () => {
+    let calls = 0;
+    const avpClient = {
+      async isAuthorized(input: any) {
+        calls++;
+        const roles = (input.Context?.ContextMap?.user?.record?.roles?.set ?? []) as Array<{ string: string }>;
+        const isOfficer = roles.some((r) => r.string === 'loan-officer');
+        return { Decision: (isOfficer ? 'ALLOW' : 'DENY') as 'ALLOW' | 'DENY', DeterminingPolicies: [] };
+      },
+    } as any;
+    const authorize = createAuthorize({
+      mode: 'avp_api', avpApi: 'entity', policyStoreId: 'ps',
+      avpClient, cedarLocal: createCedarLocal([]), cacheTtlMs: 30_000,
+    });
+    const base = {
+      principal: 'M2M::ServicePrincipal::calling-service',
+      action: 'M2M::Action::POST_loan_application',
+      resource: 'M2M::ResourceGroup::lending-resources',
+      token: '',
+    };
+    // Same principal/action/resource, different user — must NOT share a cache entry.
+    const r1 = await authorize({ ...base, context: { dpop_confirmed: true, scopes: ['lending/write'], source_domain: 'lending', correlation_id: 'c1', user: { sub: 'u1', roles: ['loan-officer'], groups: [] } } });
+    const r2 = await authorize({ ...base, context: { dpop_confirmed: true, scopes: ['lending/write'], source_domain: 'lending', correlation_id: 'c1', user: { sub: 'u2', roles: ['reader'], groups: [] } } });
+    expect(r1.decision).toBe('ALLOW');
+    expect(r2.decision).toBe('DENY');
+    expect(calls).toBe(2);
+  });
+
+  it('still serves a cache hit when context is identical (regardless of key order)', async () => {
+    let calls = 0;
+    const avpClient = {
+      async isAuthorized() { calls++; return { Decision: 'ALLOW' as const, DeterminingPolicies: [] }; },
+    } as any;
+    const authorize = createAuthorize({
+      mode: 'avp_api', avpApi: 'entity', policyStoreId: 'ps',
+      avpClient, cedarLocal: createCedarLocal([]), cacheTtlMs: 30_000,
+    });
+    const base = {
+      principal: 'M2M::ServicePrincipal::calling-service',
+      action: 'M2M::Action::POST_loan_application',
+      resource: 'M2M::ResourceGroup::lending-resources',
+      token: '',
+    };
+    const a = await authorize({ ...base, context: { dpop_confirmed: true, scopes: ['lending/write'], source_domain: 'lending', correlation_id: 'c1' } });
+    // Same logical context, different key insertion order — canonicalization must hash identically.
+    const b = await authorize({ ...base, context: { correlation_id: 'c1', source_domain: 'lending', scopes: ['lending/write'], dpop_confirmed: true } });
+    expect(a.decision).toBe('ALLOW');
+    expect(b.mode).toBe('cache');
+    expect(calls).toBe(1);
+  });
+});

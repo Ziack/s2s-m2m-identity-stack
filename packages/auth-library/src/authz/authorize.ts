@@ -1,9 +1,39 @@
+import { createHash } from 'node:crypto';
 import type { AuthorizationResult } from '../types.js';
 import type { CedarLocalEngine } from './cedarLocal.js';
 import { metrics } from '../observability/metrics.js';
 import { withSpan, SPAN_NAMES } from '../observability/tracing.js';
 import { getLogger } from '../observability/logger.js';
 import { toAvpContextMap, type AvpAttributeValue } from './avpContext.js';
+
+/**
+ * Recursively sort object keys so that logically-equal contexts serialize
+ * identically regardless of the caller's insertion order. Arrays are left in
+ * place (order-sensitive) — a reordered array yields a different hash, which is
+ * the safe direction (a cache MISS, never a false hit).
+ */
+function canonicalize(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalize);
+  if (value !== null && typeof value === 'object') {
+    const src = value as Record<string, unknown>;
+    const out: Record<string, unknown> = {};
+    for (const k of Object.keys(src).sort()) out[k] = canonicalize(src[k]);
+    return out;
+  }
+  return value;
+}
+
+/**
+ * Stable hash of the authorization context. The context carries
+ * security-decisive attributes (`user`, `scopes`, `dpop_confirmed`,
+ * `envelope_verified`, `source_domain`, …), so it MUST participate in the
+ * decision cache key — otherwise two requests with the same
+ * principal/action/resource but different context could share a cached ALLOW.
+ */
+function contextHash(context: Record<string, unknown> | undefined): string {
+  if (!context) return 'none';
+  return createHash('sha256').update(JSON.stringify(canonicalize(context))).digest('hex');
+}
 
 export interface AvpClientLike {
   isAuthorizedWithToken?(input: {
@@ -72,7 +102,7 @@ export function createAuthorize(deps: AuthorizeDeps): AuthorizeFn {
   return async function authorize(input: AuthorizeInput): Promise<AuthorizationResult> {
     return withSpan(SPAN_NAMES.AUTHZ_EVALUATE, async () => {
       const start = process.hrtime.bigint();
-      const key = `${input.principal}:${input.action}:${input.resource}`;
+      const key = `${input.principal}:${input.action}:${input.resource}:${contextHash(input.context)}`;
       const cached = cache.get(key);
       if (cached && now() - cached.storedAtMs < ttl) {
         return { ...cached.result, mode: 'cache' as const };
