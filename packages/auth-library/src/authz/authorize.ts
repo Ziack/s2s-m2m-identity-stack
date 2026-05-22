@@ -3,6 +3,7 @@ import type { CedarLocalEngine } from './cedarLocal.js';
 import { metrics } from '../observability/metrics.js';
 import { withSpan, SPAN_NAMES } from '../observability/tracing.js';
 import { getLogger } from '../observability/logger.js';
+import { toAvpContextMap, type AvpAttributeValue } from './avpContext.js';
 
 export interface AvpClientLike {
   isAuthorizedWithToken(input: {
@@ -11,12 +12,21 @@ export interface AvpClientLike {
     AccessToken?: string;
     Action: { ActionType: string; ActionId: string };
     Resource: { EntityType: string; EntityId: string };
-    Context?: { ContextMap: Record<string, unknown> };
+    Context?: { ContextMap: Record<string, AvpAttributeValue> };
+  }): Promise<{ Decision: 'ALLOW' | 'DENY'; DeterminingPolicies?: Array<{ PolicyId: string }> }>;
+  isAuthorized?(input: {
+    PolicyStoreId: string;
+    Principal: { EntityType: string; EntityId: string };
+    Action: { ActionType: string; ActionId: string };
+    Resource: { EntityType: string; EntityId: string };
+    Context?: { ContextMap: Record<string, AvpAttributeValue> };
   }): Promise<{ Decision: 'ALLOW' | 'DENY'; DeterminingPolicies?: Array<{ PolicyId: string }> }>;
 }
 
 export interface AuthorizeDeps {
   mode: 'avp_api' | 'local_cedar';
+  /** 'token' = IsAuthorizedWithToken, 'entity' = IsAuthorized for tokenless paths; default 'token'. */
+  avpApi?: 'token' | 'entity';
   policyStoreId: string;
   avpClient: AvpClientLike;
   cedarLocal: CedarLocalEngine;
@@ -44,7 +54,7 @@ export function createAuthorize(deps: AuthorizeDeps): AuthorizeFn {
   const log = getLogger();
 
   function splitAction(action: string): { type: string; id: string } {
-    const idx = action.indexOf('::');
+    const idx = action.lastIndexOf('::');
     if (idx === -1) return { type: 'Action', id: action };
     return { type: action.slice(0, idx), id: action.slice(idx + 2) };
   }
@@ -52,6 +62,11 @@ export function createAuthorize(deps: AuthorizeDeps): AuthorizeFn {
     const idx = resource.lastIndexOf('::');
     if (idx === -1) return { type: 'Resource', id: resource };
     return { type: resource.slice(0, idx), id: resource.slice(idx + 2) };
+  }
+  function splitEntity(entity: string): { type: string; id: string } {
+    const idx = entity.lastIndexOf('::');
+    if (idx === -1) return { type: 'Entity', id: entity };
+    return { type: entity.slice(0, idx), id: entity.slice(idx + 2) };
   }
 
   return async function authorize(input: AuthorizeInput): Promise<AuthorizationResult> {
@@ -67,14 +82,31 @@ export function createAuthorize(deps: AuthorizeDeps): AuthorizeFn {
         try {
           const act = splitAction(input.action);
           const res = splitResource(input.resource);
-          const avpReq: Parameters<typeof deps.avpClient.isAuthorizedWithToken>[0] = {
-            PolicyStoreId: deps.policyStoreId,
-            AccessToken: input.token,
-            Action: { ActionType: act.type, ActionId: act.id },
-            Resource: { EntityType: res.type, EntityId: res.id },
-          };
-          if (input.context) avpReq.Context = { ContextMap: input.context };
-          const resp = await deps.avpClient.isAuthorizedWithToken(avpReq);
+          const ctxMap = input.context ? toAvpContextMap(input.context) : undefined;
+          let resp: { Decision: 'ALLOW' | 'DENY'; DeterminingPolicies?: Array<{ PolicyId: string }> };
+          if ((deps.avpApi ?? 'token') === 'entity') {
+            if (!deps.avpClient.isAuthorized) {
+              throw new Error("avpApi:'entity' requires an avpClient.isAuthorized implementation");
+            }
+            const prin = splitEntity(input.principal);
+            const req: Parameters<NonNullable<typeof deps.avpClient.isAuthorized>>[0] = {
+              PolicyStoreId: deps.policyStoreId,
+              Principal: { EntityType: prin.type, EntityId: prin.id },
+              Action: { ActionType: act.type, ActionId: act.id },
+              Resource: { EntityType: res.type, EntityId: res.id },
+            };
+            if (ctxMap) req.Context = { ContextMap: ctxMap };
+            resp = await deps.avpClient.isAuthorized(req);
+          } else {
+            const req: Parameters<typeof deps.avpClient.isAuthorizedWithToken>[0] = {
+              PolicyStoreId: deps.policyStoreId,
+              AccessToken: input.token,
+              Action: { ActionType: act.type, ActionId: act.id },
+              Resource: { EntityType: res.type, EntityId: res.id },
+            };
+            if (ctxMap) req.Context = { ContextMap: ctxMap };
+            resp = await deps.avpClient.isAuthorizedWithToken(req);
+          }
           const elapsed = Number(process.hrtime.bigint() - start) / 1e6;
           result = {
             decision: resp.Decision,
