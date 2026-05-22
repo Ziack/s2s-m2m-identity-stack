@@ -43,6 +43,8 @@ function buildApp(doubles: Doubles) {
     expectedAudience: 'receiving',
     resourcePrefix: 'lending',
     sourceDomain: 'receiving',
+    action: 'POST_loan_application',
+    resourceGroup: 'lending-resources',
   });
   const app = express();
   app.use(express.json());
@@ -121,6 +123,34 @@ describe('createBrokerAuthMiddleware', () => {
     });
     // Innermost-first → outermost-last.
     expect(call.context.actor_chain).toEqual(['calling-service', 'receiving-outbound']);
+  });
+
+  it('AVP authorize is called with namespaced, route-bound principal/action/resource', async () => {
+    doubles.validateToken.mockResolvedValue(
+      makeValidated({
+        sub: 'calling-service',
+        raw: {
+          iss: 'http://broker',
+          sub: 'calling-service',
+          roles: ['lending-officer'],
+          act: { sub: 'calling-service' },
+        },
+      }),
+    );
+
+    await request(buildApp(doubles))
+      .post('/api/loans')
+      .set('authorization', 'DPoP tok')
+      .set('dpop', 'proof')
+      .send({});
+
+    expect(doubles.authorize).toHaveBeenCalledWith(
+      expect.objectContaining({
+        principal: 'M2M::ServicePrincipal::calling-service',
+        action: 'M2M::Action::POST_loan_application',
+        resource: 'M2M::ResourceGroup::lending-resources',
+      }),
+    );
   });
 
   it('rejects token signed by wrong issuer (validateToken throws) → 401 invalid_token', async () => {
