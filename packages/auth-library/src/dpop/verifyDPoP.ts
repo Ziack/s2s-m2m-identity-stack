@@ -47,7 +47,7 @@ export interface VerifyDPoPInput {
    * constraint). When provided, the proof's key thumbprint must equal it or
    * verification throws `dpop_key_mismatch`. Pass `validatedToken.cnf?.jkt`.
    */
-  expectedJkt?: string;
+  expectedJkt?: string | undefined;
   /**
    * Hard-enforce that the token carries a `cnf.jkt`. When true and
    * `expectedJkt` is absent/empty, verification throws `dpop_key_mismatch`.

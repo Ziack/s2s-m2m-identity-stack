@@ -20,9 +20,18 @@ export interface AuthMiddlewareDeps {
   expectedAudience: string;
   resourcePrefix: string;
   validateToken: (token: string, options: { expectedAudience: string }) => Promise<ValidatedToken>;
-  verifyDPoP: (input: { dpopProof: string; accessToken: string; expectedHtm: string; expectedHtu: string }) => Promise<DPoPVerificationResult>;
+  verifyDPoP: (input: { dpopProof: string; accessToken: string; expectedHtm: string; expectedHtu: string; expectedJkt?: string | undefined; requireCnfBinding?: boolean }) => Promise<DPoPVerificationResult>;
   authorize: (input: { principal: string; action: string; resource: string; token: string; context?: Record<string, unknown> }) => Promise<AuthorizationResult>;
   requireDPoP?: boolean;
+  /**
+   * Hard-enforce RFC 9449 §6 sender-constraint: the resource-call DPoP proof's
+   * key thumbprint must equal the validated token's `cnf.jkt`, and the token
+   * MUST carry a `cnf.jkt`. Defaults to true (v2.2.0 hard-enforce). When true
+   * the middleware passes `expectedJkt`/`requireCnfBinding` into `verifyDPoP`,
+   * so a stolen token presented with a different key — or a token with no
+   * `cnf.jkt` — is rejected with `dpop_key_mismatch` (401).
+   */
+  requireCnfBinding?: boolean;
   mode?: BrokerAuthMode;
   logger?: { info: (obj: unknown, msg?: string) => void; warn: (obj: unknown, msg?: string) => void };
   metrics?: { m2mShadowModeDecisionsTotal?: { inc: (labels: { decision: string; result: string }) => void } };
@@ -60,6 +69,10 @@ function send(
 
 export function createAuthMiddleware(deps: AuthMiddlewareDeps): RequestHandler {
   const mode: BrokerAuthMode = deps.mode ?? 'enforce';
+  // v2.2.0 hard-enforce: scaffolded services get cnf.jkt sender-constraint by
+  // default. validateToken runs before verifyDPoP (below), so the token's
+  // cnf.jkt is available to pass in.
+  const requireCnfBinding = deps.requireCnfBinding !== false;
   const log = deps.logger ?? { info: () => {}, warn: () => {} };
   const incShadow = (decision: string, result: string): void => {
     deps.metrics?.m2mShadowModeDecisionsTotal?.inc({ decision, result });
@@ -110,7 +123,18 @@ export function createAuthMiddleware(deps: AuthMiddlewareDeps): RequestHandler {
         if (!dpopHeader) { reject(401, ERROR_CODES.INVALID_DPOP_PROOF, 'missing DPoP header'); return; }
         const host = req.get('host') ?? '';
         const htu = `${req.protocol}://${host}${req.originalUrl.split('?')[0]}`;
-        await deps.verifyDPoP({ dpopProof: dpopHeader, accessToken, expectedHtm: req.method.toUpperCase(), expectedHtu: htu });
+        // RFC 9449 §6: enforce the resource-call proof key matches the token's
+        // cnf.jkt. Inside verifyDPoP the nonce challenge (if any) fires BEFORE
+        // the cnf check, so first-contact callers still get the nonce-retry
+        // handshake; the cnf mismatch is a separate hard failure.
+        await deps.verifyDPoP({
+          dpopProof: dpopHeader,
+          accessToken,
+          expectedHtm: req.method.toUpperCase(),
+          expectedHtu: htu,
+          expectedJkt: validated.cnf?.jkt,
+          requireCnfBinding,
+        });
       }
 
       const principal = `ServicePrincipal::${validated.sub}`;
@@ -168,6 +192,11 @@ export interface BrokerAuthConfig {
   redisEndpoint: string;
   mode?: BrokerAuthMode;
   requireDPoP?: boolean;
+  /**
+   * Hard-enforce cnf.jkt sender-constraint (RFC 9449 §6). Default: true
+   * (v2.2.0). See {@link AuthMiddlewareDeps.requireCnfBinding}.
+   */
+  requireCnfBinding?: boolean;
   /** Refresh interval for the JWKS cache. Default: 24h. */
   jwksRefreshHours?: number;
   /** DPoP nonce TTL (seconds). Default: 120. */
@@ -262,6 +291,7 @@ function wireBrokerAuthConfig(cfg: BrokerAuthConfig): AuthMiddlewareDeps {
     verifyDPoP,
     authorize,
     requireDPoP: cfg.requireDPoP ?? true,
+    requireCnfBinding: cfg.requireCnfBinding ?? true,
     ...(cfg.mode !== undefined ? { mode: cfg.mode } : {}),
     ...(cfg.logger !== undefined ? { logger: cfg.logger } : {}),
     ...(cfg.metrics !== undefined ? { metrics: cfg.metrics } : {}),
