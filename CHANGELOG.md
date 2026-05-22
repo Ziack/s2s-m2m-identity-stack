@@ -17,6 +17,31 @@ A single version line covers every artifact in the repo (see §9.1 of the design
 
 (Nothing yet.)
 
+## [2.1.2] — 2026-05-21
+
+Five **correctness / production-hardening** fixes from an external security review, applied to the **shared SDK + Terraform modules + app-template** AND the two chained example services, so the next deploy and the next scaffolded service inherit them with no manual patching. These were the cause of `/demo/sync` stalling end-to-end. (Single-actor mode; no behavior change for callers.)
+
+### Fixed
+
+- **DPoP-Nonce response header now set on nonce challenges.** When the auth pipeline requires a (fresh) DPoP nonce it throws `AuthError` carrying `challengeNonce`, but none of the three error-send paths copied it into a `DPoP-Nonce` response header — only `WWW-Authenticate`. So the client never learned the nonce to retry and `/demo/sync` stalled at the nonce-retry step (receiver→ledger, and would have at calling→receiver too). Fixed in the shared SDK middleware (`packages/auth-library/src/middleware.ts`) and both example services' broker middleware (`examples/chained/receiving-service/src/lib/brokerAuthMiddleware.ts`, `examples/chained/ledger-service/src/lib/brokerAuthMiddleware.ts`). The outbound clients already read `DPoP-Nonce`, so the handshake now completes.
+- **s2s-service injects both client-secret env var names.** The module emitted only `COGNITO_CLIENT_SECRET_ARN`, but the SDK (`config.ts`) and the chained calling-service read `M2M_CLIENT_SECRET_ARN`, so apps couldn't find the secret ARN. The module now injects BOTH names pointing at the same ARN (additive, backward-compatible). `M2M_CLIENT_SECRET_ARN` is now a reserved env name in `var.env` collision validation.
+- **Broker signing key stored as PKCS#8 to match the loader.** `modules/s2s-platform/secrets.tf` stored `private_key_pem` (PKCS#1 for an RSA key), but the broker's `signingKeyLoader.ts` calls `importPKCS8(...)`. The secret now stores `private_key_pem_pkcs8`. The key resource is RSA / RS256 (confirmed).
+- **`trust proxy` + X-Forwarded-Proto so DPoP `htu` is computed as `https` behind the ALB.** Behind the ALB (TLS termination) Express saw `req.protocol === 'http'`, so the receiver's computed `htu` (`http://…`) never matched the `https://` URL the caller signed. Added `app.set('trust proxy', true)` to the app-template and all three chained services; outbound clients now normalize ALB-mode service URLs to `https://` so the signed `htu` matches.
+- **`NODE_TLS_REJECT_UNAUTHORIZED=0` is now an explicit, default-OFF opt-in.** Outbound HTTPS to the fixture self-signed ALB cert needs TLS verification relaxed, but it must never be silently hardcoded. Added `applyInsecureTlsEscapeHatch()` to `@s2s/auth-library`: it sets `NODE_TLS_REJECT_UNAUTHORIZED=0` **only** when `ALLOW_INSECURE_TLS=true`, with a loud security warning, and is wired into the app-template + all three services. Production must use a real ACM cert and leave the flag unset.
+
+### Added
+
+- `packages/auth-library/test/middleware.test.ts` — asserts the `DPoP-Nonce` header is set when the pipeline throws an `AuthError` with `challengeNonce` (and not set otherwise).
+- `packages/auth-library/test/tls.test.ts` — covers the default-OFF / opt-in `applyInsecureTlsEscapeHatch` behavior.
+- receiving + ledger `broker-auth-middleware.test.ts` — assert their middleware sets `DPoP-Nonce` on the nonce challenge.
+- `toHttpsBaseUrl` unit coverage in calling-service `sync.test.ts` + receiving-service `ledger-client.test.ts`.
+- `modules/s2s-service/tests/outbound.tftest.hcl` — asserts both `COGNITO_CLIENT_SECRET_ARN` and `M2M_CLIENT_SECRET_ARN` are emitted and point at the same ARN.
+- `packages/token-broker/test/signing-key-loader.test.ts` — loads a PKCS#8 RSA key (the form TF now stores) and asserts a PKCS#1 key is rejected.
+
+### Note
+
+These were external-review findings. The actor-catalog secret ARN finding (#5 from that review) was already fixed in v2.0.4. True DPoP sender-constraint binding (`cnf.jkt`) is intentionally **not** implemented here — it is tracked for v2.2.0.
+
 ## [2.1.1] — 2026-05-21
 
 Fixes the **calling-service user-facing ALB ingress**. These two bugs were diagnosed alongside the v2.1.0 Dockerfile fix but were missed in that release — v2.1.0 made the broker reachable and fixed the image builds, but the calling-service's own user-facing routes still 404'd or were intercepted.

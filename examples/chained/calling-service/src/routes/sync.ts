@@ -17,6 +17,19 @@ import type { CallingServiceConfig } from '../config.js';
  *   5. We echo the authenticated identity back in the response body so the
  *      caller can confirm propagation.
  */
+/**
+ * Force an ALB-mode base URL to https. Behind the ALB (TLS termination) the
+ * receiver computes the DPoP `htu` as https (via `trust proxy` +
+ * X-Forwarded-Proto), so the caller MUST sign the same https scheme or the htu
+ * will not match. An empty value is passed through unchanged.
+ */
+export function toHttpsBaseUrl(url: string): string {
+  if (!url) return url;
+  if (url.startsWith('https://')) return url;
+  if (url.startsWith('http://')) return `https://${url.slice('http://'.length)}`;
+  return `https://${url}`;
+}
+
 export function syncRouter(config: CallingServiceConfig): Router {
   const router = Router();
 
@@ -26,7 +39,7 @@ export function syncRouter(config: CallingServiceConfig): Router {
     const lattice = useLattice() && !!config.receivingLatticeDns;
     const receivingBase = lattice
       ? `https://${config.receivingLatticeDns}`
-      : (config.receivingServiceUrl || config.targetBaseUrl);
+      : toHttpsBaseUrl(config.receivingServiceUrl || config.targetBaseUrl);
     const htu = `${receivingBase}/api/loans`;
     const user = req.user;
     if (!user) {

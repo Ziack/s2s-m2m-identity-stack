@@ -136,3 +136,4 @@ module "platform" {
 - Removing a bounded_context destroys its policy store and resource server. Use Terraform `moved` blocks for renames.
 - SSM parameters are namespaced by `environment`. Two platforms in the same account require distinct environment names.
 - Self-signed ACM certificate on the ALB is for fixture/test only — production deployments should attach a real cert via `aws_lb_listener_certificate`.
+- **Insecure-TLS escape hatch:** with the self-signed cert, outbound HTTPS between services fails certificate verification. Services expose an opt-in, default-OFF flag `ALLOW_INSECURE_TLS=true` (handled by `applyInsecureTlsEscapeHatch` in `@s2s/auth-library`) that disables outbound TLS verification for the PoC path. Production MUST attach a real ACM cert and leave `ALLOW_INSECURE_TLS` unset.

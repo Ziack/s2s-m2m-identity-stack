@@ -1,7 +1,12 @@
 import express from 'express';
 import { pinoHttp } from 'pino-http';
 import pino from 'pino';
+import { applyInsecureTlsEscapeHatch } from '@s2s/auth-library';
 import { config } from './config.js';
+
+// Opt-in, default-OFF TLS escape hatch for the self-signed-cert PoC path.
+// No effect unless ALLOW_INSECURE_TLS=true. Production uses a real ACM cert.
+applyInsecureTlsEscapeHatch();
 import { buildAuthMiddleware } from './lib/auth.js';
 import { apiRouter } from './routes/api.js';
 import { healthRouter } from './routes/health.js';
@@ -11,6 +16,10 @@ const logger = pino({ level: config.LOG_LEVEL });
 
 const app = express();
 app.disable('x-powered-by');
+// Behind the ALB (TLS termination) Express must honor X-Forwarded-Proto so
+// `req.protocol` reports `https`. This is required for the DPoP `htu` to match
+// the https URL the caller signed.
+app.set('trust proxy', true);
 app.use(express.json({ limit: '1mb' }));
 app.use(pinoHttp({ logger }));
 

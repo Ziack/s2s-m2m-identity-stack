@@ -98,3 +98,32 @@ run "outbound_audiences_env_present" {
     error_message = "BROKER_TOKEN_ENDPOINT must be set when outbound_audiences is non-empty."
   }
 }
+
+run "both_client_secret_arn_env_names_emitted" {
+  command = plan
+
+  # v2.1.2: the SDK + chained services read M2M_CLIENT_SECRET_ARN, but the module
+  # historically only emitted COGNITO_CLIENT_SECRET_ARN. Assert BOTH are present
+  # and point at the same client-secret ARN.
+  assert {
+    condition = anytrue([
+      for e in jsondecode(aws_ecs_task_definition.this.container_definitions)[0].environment :
+      e.name == "COGNITO_CLIENT_SECRET_ARN"
+    ])
+    error_message = "COGNITO_CLIENT_SECRET_ARN env var must be present."
+  }
+  assert {
+    condition = anytrue([
+      for e in jsondecode(aws_ecs_task_definition.this.container_definitions)[0].environment :
+      e.name == "M2M_CLIENT_SECRET_ARN"
+    ])
+    error_message = "M2M_CLIENT_SECRET_ARN env var must be present (the name the SDK reads)."
+  }
+  assert {
+    condition = length(distinct([
+      for e in jsondecode(aws_ecs_task_definition.this.container_definitions)[0].environment :
+      e.value if e.name == "COGNITO_CLIENT_SECRET_ARN" || e.name == "M2M_CLIENT_SECRET_ARN"
+    ])) == 1
+    error_message = "COGNITO_CLIENT_SECRET_ARN and M2M_CLIENT_SECRET_ARN must point at the same ARN."
+  }
+}

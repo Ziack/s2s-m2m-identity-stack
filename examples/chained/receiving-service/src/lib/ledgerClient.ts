@@ -36,6 +36,20 @@ export class LedgerOutboundError extends Error {
   }
 }
 
+/**
+ * Force an ALB-mode base URL to https. Behind the ALB (TLS termination) the
+ * receiver computes the DPoP `htu` as https (via `trust proxy` +
+ * X-Forwarded-Proto), so the caller MUST sign the same https scheme or the htu
+ * will not match. An empty value is passed through unchanged.
+ */
+export function toHttpsBaseUrl(url: string): string {
+  if (!url) return url;
+  if (url.startsWith('https://')) return url;
+  if (url.startsWith('http://')) return `https://${url.slice('http://'.length)}`;
+  // Schemeless host (e.g. "svc.internal") — default to https.
+  return `https://${url}`;
+}
+
 let exchangeFn: ExchangeTokenFn | null = null;
 let configRef: ReceivingServiceConfig | null = null;
 let fetchImpl: typeof fetch = fetch;
@@ -125,7 +139,7 @@ export async function postLedgerEntry(
   // Lattice mode: target ledger's Lattice DNS so SigV4 + DPoP htu both bind to
   // the Lattice URL; otherwise the ALB service URL (legacy path).
   const lattice = useLattice() && !!config.ledgerLatticeDns;
-  const ledgerBase = lattice ? `https://${config.ledgerLatticeDns}` : config.ledgerServiceUrl;
+  const ledgerBase = lattice ? `https://${config.ledgerLatticeDns}` : toHttpsBaseUrl(config.ledgerServiceUrl);
   const htu = `${ledgerBase}/api/ledger/entries`;
   const body = JSON.stringify(args.payload);
 

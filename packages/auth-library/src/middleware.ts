@@ -39,8 +39,22 @@ declare module 'express-serve-static-core' {
   }
 }
 
-function send(res: Response, status: number, code: ErrorCode, description: string, requestId: string): void {
+function send(
+  res: Response,
+  status: number,
+  code: ErrorCode,
+  description: string,
+  requestId: string,
+  challengeNonce?: string,
+): void {
   res.setHeader('WWW-Authenticate', wwwAuthenticateHeader(code));
+  // RFC 9449: when the resource server requires a (fresh) DPoP nonce it MUST
+  // return the nonce in the `DPoP-Nonce` response header so the client can
+  // retry with a proof bound to it. Without this the client can never satisfy
+  // the nonce challenge and the request stalls.
+  if (challengeNonce) {
+    res.setHeader('DPoP-Nonce', challengeNonce);
+  }
   res.status(status).json(buildErrorBody({ code, description, requestId }));
 }
 
@@ -54,14 +68,14 @@ export function createAuthMiddleware(deps: AuthMiddlewareDeps): RequestHandler {
   return async function authMiddleware(req: Request, res: Response, next: NextFunction): Promise<void> {
     const requestId = (req.headers['x-request-id'] as string | undefined) ?? randomUUID();
 
-    const reject = (status: number, code: ErrorCode, description: string): void => {
+    const reject = (status: number, code: ErrorCode, description: string, challengeNonce?: string): void => {
       if (mode === 'log-only') {
         log.warn({ requestId, code, description, shadow_mode: true }, 'shadow_mode would_reject');
         incShadow('INVALID', 'would_reject');
         next();
         return;
       }
-      send(res, status, code, description, requestId);
+      send(res, status, code, description, requestId, challengeNonce);
     };
 
     try {
@@ -128,7 +142,7 @@ export function createAuthMiddleware(deps: AuthMiddlewareDeps): RequestHandler {
       req.auth = { sub: validated.sub, scopes: validated.scope, decision: decision.decision, reasons: decision.reasons };
       next();
     } catch (err) {
-      if (err instanceof AuthError) { reject(err.status, err.code, err.message); return; }
+      if (err instanceof AuthError) { reject(err.status, err.code, err.message, err.challengeNonce); return; }
       reject(401, ERROR_CODES.INVALID_TOKEN, (err as Error).message);
     }
   };

@@ -10,10 +10,14 @@ locals {
 
   # Standard, platform-managed environment variables.
   platform_env = {
-    COGNITO_DOMAIN            = var.platform.cognito_domain
-    USER_POOL_ID              = var.platform.user_pool_id
-    COGNITO_CLIENT_ID         = aws_cognito_user_pool_client.this.id
+    COGNITO_DOMAIN    = var.platform.cognito_domain
+    USER_POOL_ID      = var.platform.user_pool_id
+    COGNITO_CLIENT_ID = aws_cognito_user_pool_client.this.id
+    # Inject the client-secret ARN under BOTH names. The SDK auth-library and the
+    # chained example services read `M2M_CLIENT_SECRET_ARN`; `COGNITO_CLIENT_SECRET_ARN`
+    # is retained for backward compatibility. Both point at the same secret.
     COGNITO_CLIENT_SECRET_ARN = aws_secretsmanager_secret.client_secret.arn
+    M2M_CLIENT_SECRET_ARN     = aws_secretsmanager_secret.client_secret.arn
     BROKER_URL                = var.platform.broker_url
     BROKER_JWKS_URI           = var.platform.broker_jwks_uri
     BROKER_ISSUER             = var.platform.broker_issuer

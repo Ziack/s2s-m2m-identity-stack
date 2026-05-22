@@ -193,6 +193,27 @@ describe('createBrokerAuthMiddleware', () => {
     expect(res.body.error).toBe('invalid_dpop_proof');
   });
 
+  it('sets DPoP-Nonce response header on a nonce-challenge (verifyDPoP throws AuthError with challengeNonce)', async () => {
+    doubles.validateToken.mockResolvedValue(
+      makeValidated({
+        raw: { iss: 'http://broker', sub: 'user-alice', act: { sub: 'calling-service' } },
+      }),
+    );
+    doubles.verifyDPoP.mockRejectedValue(
+      new AuthError(401, ERROR_CODES.USE_DPOP_NONCE, 'server requires DPoP-Nonce echo', {
+        challengeNonce: 'nonce-from-server',
+      }),
+    );
+    const res = await request(buildApp(doubles))
+      .post('/api/loans')
+      .set('authorization', 'DPoP tok')
+      .set('dpop', 'proof')
+      .send({});
+    expect(res.status).toBe(401);
+    expect(res.body.error).toBe('use_dpop_nonce');
+    expect(res.headers['dpop-nonce']).toBe('nonce-from-server');
+  });
+
   it('actorChainAsString flattens innermost-first', () => {
     const chain = { sub: 'receiving-outbound', act: { sub: 'calling-service' } };
     expect(actorChainAsString(chain)).toEqual(['calling-service', 'receiving-outbound']);

@@ -115,4 +115,25 @@ describe('ledger createBrokerAuthMiddleware', () => {
     expect(res.status).toBe(401);
     expect(res.body.error).toBe('invalid_token');
   });
+
+  it('sets DPoP-Nonce response header on a nonce-challenge (verifyDPoP throws AuthError with challengeNonce)', async () => {
+    doubles.validateToken.mockResolvedValue(
+      makeValidated({
+        raw: { iss: 'http://broker', sub: 'user-alice', act: { sub: 'receiving-service-outbound' } },
+      }),
+    );
+    doubles.verifyDPoP.mockRejectedValue(
+      new AuthError(401, ERROR_CODES.USE_DPOP_NONCE, 'server requires DPoP-Nonce echo', {
+        challengeNonce: 'ledger-nonce-xyz',
+      }),
+    );
+    const res = await request(buildApp(doubles))
+      .post('/api/ledger/entries')
+      .set('authorization', 'DPoP tok')
+      .set('dpop', 'proof')
+      .send({});
+    expect(res.status).toBe(401);
+    expect(res.body.error).toBe('use_dpop_nonce');
+    expect(res.headers['dpop-nonce']).toBe('ledger-nonce-xyz');
+  });
 });

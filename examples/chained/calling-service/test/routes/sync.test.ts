@@ -13,8 +13,23 @@ vi.mock('../../src/lib/exchangeClient.js', () => ({
   initExchangeClient: vi.fn(),
 }));
 
-import { syncRouter } from '../../src/routes/sync.js';
+import { syncRouter, toHttpsBaseUrl } from '../../src/routes/sync.js';
 import { __setLatticeFetchForTest } from '../../src/lib/latticeFetch.js';
+
+describe('toHttpsBaseUrl', () => {
+  it('upgrades http:// to https:// so the signed htu matches the receiver scheme', () => {
+    expect(toHttpsBaseUrl('http://receiver.internal')).toBe('https://receiver.internal');
+  });
+  it('passes https:// through unchanged', () => {
+    expect(toHttpsBaseUrl('https://receiver.internal')).toBe('https://receiver.internal');
+  });
+  it('defaults a schemeless host to https://', () => {
+    expect(toHttpsBaseUrl('receiver.internal')).toBe('https://receiver.internal');
+  });
+  it('passes empty string through unchanged', () => {
+    expect(toHttpsBaseUrl('')).toBe('');
+  });
+});
 
 const fetchMock = vi.fn();
 vi.stubGlobal('fetch', fetchMock);

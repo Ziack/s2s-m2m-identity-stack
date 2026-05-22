@@ -120,8 +120,14 @@ function send(
   code: ErrorCodeValue,
   description: string,
   requestId: string,
+  challengeNonce?: string,
 ): void {
   res.setHeader('WWW-Authenticate', wwwAuthenticateHeader(code));
+  // RFC 9449: surface the DPoP nonce challenge so the caller can retry with a
+  // proof bound to it. Without this header the nonce-retry handshake stalls.
+  if (challengeNonce) {
+    res.setHeader('DPoP-Nonce', challengeNonce);
+  }
   res.status(status).json(buildErrorBody({ code, description, requestId }));
 }
 
@@ -267,7 +273,7 @@ export function createBrokerAuthMiddleware(deps: BrokerAuthDeps): RequestHandler
       next();
     } catch (err) {
       if (err instanceof AuthError) {
-        send(res, err.status, err.code, err.message, requestId);
+        send(res, err.status, err.code, err.message, requestId, err.challengeNonce);
         return;
       }
       send(res, 401, ERROR_CODES.INVALID_TOKEN, (err as Error).message, requestId);

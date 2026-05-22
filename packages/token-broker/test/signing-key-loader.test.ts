@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll } from 'vitest';
+import { generateKeyPairSync } from 'node:crypto';
 import { createSigningKeyLoader } from '../src/lib/signingKeyLoader.js';
 import { makeRsaKey, type TestKeyMaterial } from './helpers/testFixtures.js';
 
@@ -62,5 +63,39 @@ describe('signingKeyLoader', () => {
       fetchSecret: async () => 'not-a-pem',
     });
     await expect(loader.get()).rejects.toThrow(/PEM/);
+  });
+
+  it('loads a PKCS#8 RSA key (the form Terraform now stores via private_key_pem_pkcs8)', async () => {
+    // tls_private_key.private_key_pem_pkcs8 produces a PKCS#8 PEM. Mirror that
+    // here to prove the loader imports it (this is the v2.1.2 secrets.tf fix).
+    const { privateKey } = generateKeyPairSync('rsa', {
+      modulusLength: 2048,
+      privateKeyEncoding: { type: 'pkcs8', format: 'pem' },
+      publicKeyEncoding: { type: 'spki', format: 'pem' },
+    });
+    const loader = createSigningKeyLoader({
+      secretArn: 'arn:test:secret',
+      fetchSecret: async () => privateKey as string,
+    });
+    const k = await loader.get();
+    expect(k.publicJwk.kty).toBe('RSA');
+    expect(k.publicJwk.alg).toBe('RS256');
+    expect(typeof k.kid).toBe('string');
+  });
+
+  it('rejects a PKCS#1 RSA key (the bug v2.1.2 fixes: TF previously stored private_key_pem / PKCS#1)', async () => {
+    // tls_private_key.private_key_pem produces a PKCS#1 PEM for RSA keys, which
+    // importPKCS8 cannot parse — this is exactly the failure the secrets.tf fix
+    // avoids. Assert the loader surfaces an error rather than silently loading.
+    const { privateKey } = generateKeyPairSync('rsa', {
+      modulusLength: 2048,
+      privateKeyEncoding: { type: 'pkcs1', format: 'pem' },
+      publicKeyEncoding: { type: 'pkcs1', format: 'pem' },
+    });
+    const loader = createSigningKeyLoader({
+      secretArn: 'arn:test:secret',
+      fetchSecret: async () => privateKey as string,
+    });
+    await expect(loader.get()).rejects.toThrow();
   });
 });

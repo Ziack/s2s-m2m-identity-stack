@@ -5,15 +5,18 @@ resource "tls_private_key" "broker_signing" {
 
 resource "aws_secretsmanager_secret" "broker_signing" {
   name                    = "${local.name_prefix}/broker/signing-key"
-  description             = "Token broker RSA private key (PEM)"
+  description             = "Token broker RSA private key (PKCS#8 PEM)"
   kms_key_id              = aws_kms_key.secrets.arn
   recovery_window_in_days = 7
   tags                    = local.common_tags
 }
 
 resource "aws_secretsmanager_secret_version" "broker_signing" {
-  secret_id     = aws_secretsmanager_secret.broker_signing.id
-  secret_string = tls_private_key.broker_signing.private_key_pem
+  secret_id = aws_secretsmanager_secret.broker_signing.id
+  # The broker's signingKeyLoader.ts calls importPKCS8(...), so the key MUST be
+  # stored in PKCS#8 form. `private_key_pem` is PKCS#1 for RSA keys and would
+  # fail to import — use `private_key_pem_pkcs8`.
+  secret_string = tls_private_key.broker_signing.private_key_pem_pkcs8
 }
 
 # Actor catalog — the broker reads this on boot for client_secret_basic

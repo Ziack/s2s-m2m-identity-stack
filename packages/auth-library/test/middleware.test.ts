@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { createAuthMiddleware } from '../src/middleware.js';
+import { AuthError, ERROR_CODES } from '../src/errors.js';
 import type { Request, Response } from 'express';
 
 describe('createAuthMiddleware', () => {
@@ -64,5 +65,41 @@ describe('createAuthMiddleware', () => {
     await mw(req, res as Response, next);
     expect(statusCode).toBe(403);
     expect((body as { error: string }).error).toBe('authorization_denied');
+  });
+
+  it('sets DPoP-Nonce response header when verifyDPoP throws an AuthError carrying challengeNonce', async () => {
+    const mw = createAuthMiddleware({
+      expectedAudience: 'aud',
+      resourcePrefix: 'Resource::svc',
+      validateToken: async () => ({ sub: 'c', scope: ['a'], iss: 'iss', aud: 'aud', exp: 999, raw: {} }),
+      verifyDPoP: async () => {
+        throw new AuthError(401, ERROR_CODES.USE_DPOP_NONCE, 'server requires DPoP-Nonce echo', {
+          challengeNonce: 'nonce-abc-123',
+        });
+      },
+      authorize: async () => ({ decision: 'ALLOW', reasons: [], evaluationTimeMs: 1, mode: 'api' }),
+    });
+    const req = { method: 'POST', originalUrl: '/x', protocol: 'https', get: () => 'api.example', headers: { authorization: 'DPoP abc', dpop: 'proof' } } as unknown as Request;
+    await mw(req, res as Response, next);
+    expect(statusCode).toBe(401);
+    expect((body as { error: string }).error).toBe('use_dpop_nonce');
+    expect(headers['DPoP-Nonce']).toBe('nonce-abc-123');
+    expect(headers['WWW-Authenticate']).toMatch(/DPoP/);
+  });
+
+  it('does not set DPoP-Nonce header for AuthErrors without a challengeNonce', async () => {
+    const mw = createAuthMiddleware({
+      expectedAudience: 'aud',
+      resourcePrefix: 'Resource::svc',
+      validateToken: async () => {
+        throw new AuthError(401, ERROR_CODES.INVALID_TOKEN, 'bad token');
+      },
+      verifyDPoP: async () => ({ ok: true, jti: 'j', jwkThumbprint: 't', iat: 0 }),
+      authorize: async () => ({ decision: 'ALLOW', reasons: [], evaluationTimeMs: 1, mode: 'api' }),
+    });
+    const req = { method: 'GET', originalUrl: '/x', protocol: 'https', get: () => 'api.example', headers: { authorization: 'DPoP abc', dpop: 'proof' } } as unknown as Request;
+    await mw(req, res as Response, next);
+    expect(statusCode).toBe(401);
+    expect(headers['DPoP-Nonce']).toBeUndefined();
   });
 });

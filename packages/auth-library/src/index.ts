@@ -41,6 +41,7 @@ export { getClientSecret, invalidateClientSecret } from './secrets.js';
 export { getRedisClient, buildRedis, pingRedis, setRedisClientForTest, resetRedisClientForTest } from './redisClient.js';
 export { jwksLastRefreshAt } from './validation/jwksManager.js';
 export { AuthError, ERROR_CODES, buildErrorBody, wwwAuthenticateHeader } from './errors.js';
+export { applyInsecureTlsEscapeHatch } from './tls.js';
 export {
   createLatticeFetch,
   LATTICE_SIGNING_SERVICE,

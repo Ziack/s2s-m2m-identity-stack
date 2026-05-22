@@ -2,11 +2,27 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   postLedgerEntry,
   LedgerOutboundError,
+  toHttpsBaseUrl,
   __setExchangeFn,
   __setFetchImpl,
   __resetLedgerClient,
 } from '../src/lib/ledgerClient.js';
 import { __setLatticeFetchForTest } from '../src/lib/latticeFetch.js';
+
+describe('toHttpsBaseUrl', () => {
+  it('upgrades http:// to https:// so the signed htu matches the receiver scheme', () => {
+    expect(toHttpsBaseUrl('http://ledger.internal')).toBe('https://ledger.internal');
+  });
+  it('passes https:// through unchanged', () => {
+    expect(toHttpsBaseUrl('https://ledger.internal')).toBe('https://ledger.internal');
+  });
+  it('defaults a schemeless host to https://', () => {
+    expect(toHttpsBaseUrl('ledger.internal')).toBe('https://ledger.internal');
+  });
+  it('passes empty string through unchanged', () => {
+    expect(toHttpsBaseUrl('')).toBe('');
+  });
+});
 
 const signedProofs: string[] = [];
 const signedNonces: Array<string | undefined> = [];
@@ -91,7 +107,9 @@ describe('postLedgerEntry', () => {
     expect(exchange).toHaveBeenCalledWith({ subjectToken: 'inbound-token-abc' });
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = fetchMock.mock.calls[0]!;
-    expect(url).toBe('http://ledger.local/api/ledger/entries');
+    // ALB-mode base URL is normalized to https so the signed htu matches the
+    // scheme the receiver computes behind the ALB (X-Forwarded-Proto).
+    expect(url).toBe('https://ledger.local/api/ledger/entries');
     const headers = (init as RequestInit).headers as Record<string, string>;
     expect(headers.authorization).toBe('DPoP exchanged-for-inbound-token-abc');
     expect(headers.dpop).toBe('proof-1');
