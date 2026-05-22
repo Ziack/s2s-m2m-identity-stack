@@ -89,8 +89,9 @@ function buildApp(opts: { tokenCnfJkt: string | undefined }) {
     verifyDPoP: verifyDPoP as never,
     authorize: authorize as never,
     expectedAudience: 'ledger',
-    resourcePrefix: 'ledger',
     sourceDomain: 'ledger',
+    action: 'POST_ledger_entry',
+    resourceGroup: 'ledger-resources',
   });
   const app = express();
   app.use(express.json());

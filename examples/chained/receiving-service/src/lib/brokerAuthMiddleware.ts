@@ -21,7 +21,7 @@ import type { Request, Response, NextFunction, RequestHandler } from 'express';
 import { randomUUID } from 'node:crypto';
 import {
   VerifiedPermissionsClient,
-  IsAuthorizedWithTokenCommand,
+  IsAuthorizedCommand,
 } from '@aws-sdk/client-verifiedpermissions';
 import {
   createJwksManager,
@@ -99,8 +99,11 @@ export interface BrokerAuthDeps {
     context?: Record<string, unknown>;
   }) => Promise<{ decision: 'ALLOW' | 'DENY'; reasons: string[] }>;
   expectedAudience: string;
-  resourcePrefix: string;
   sourceDomain: string;
+  /** Cedar schema action ID for this route, e.g. "POST_loan_application". */
+  action: string;
+  /** Cedar ResourceGroup entity ID for this route, e.g. "lending-resources". */
+  resourceGroup: string;
 }
 
 /**
@@ -221,10 +224,9 @@ export function createBrokerAuthMiddleware(deps: BrokerAuthDeps): RequestHandler
         issuer: validated.iss,
       };
 
-      const principal = `ServicePrincipal::${validated.sub}`;
-      const pathForResource = req.path ?? (req.originalUrl ?? '').split('?')[0] ?? '';
-      const action = `Action::${req.method.toUpperCase()}_${(req.route?.path ?? pathForResource).replace(/[^A-Za-z0-9]/g, '_')}`;
-      const resource = `${deps.resourcePrefix}::${pathForResource}`;
+      const principal = `M2M::ServicePrincipal::${validated.sub}`;
+      const action = `M2M::Action::${deps.action}`;
+      const resource = `M2M::ResourceGroup::${deps.resourceGroup}`;
 
       const correlationId =
         (req.headers['x-correlation-id'] as string | undefined) ??
@@ -295,7 +297,10 @@ export function createBrokerAuthMiddleware(deps: BrokerAuthDeps): RequestHandler
  * Build a broker-aware middleware wired to real SDK factories and the
  * configured AVP policy store. Used in production.
  */
-export function buildBrokerAuthMiddleware(config: ReceivingServiceConfig): RequestHandler {
+export function buildBrokerAuthMiddleware(
+  config: ReceivingServiceConfig,
+  binding: { action: string; resourceGroup: string },
+): RequestHandler {
   const redis = getRedisClient(config.redisEndpoint);
   const nonceStore = createNonceStore(config.redisEndpoint);
 
@@ -316,19 +321,16 @@ export function buildBrokerAuthMiddleware(config: ReceivingServiceConfig): Reque
 
   const avpRaw = new VerifiedPermissionsClient({ region: config.awsRegion });
   const avpClient = {
-    async isAuthorizedWithToken(
-      input: Parameters<Parameters<typeof createAuthorize>[0]['avpClient']['isAuthorizedWithToken']>[0],
+    async isAuthorized(
+      input: Parameters<NonNullable<Parameters<typeof createAuthorize>[0]['avpClient']['isAuthorized']>>[0],
     ) {
       const resp = await avpRaw.send(
-        new IsAuthorizedWithTokenCommand({
+        new IsAuthorizedCommand({
           policyStoreId: input.PolicyStoreId,
-          accessToken: input.AccessToken,
-          identityToken: input.IdentityToken,
+          principal: { entityType: input.Principal.EntityType, entityId: input.Principal.EntityId },
           action: { actionType: input.Action.ActionType, actionId: input.Action.ActionId },
           resource: { entityType: input.Resource.EntityType, entityId: input.Resource.EntityId },
-          ...(input.Context
-            ? { context: { contextMap: input.Context.ContextMap as Record<string, never> } }
-            : {}),
+          ...(input.Context ? { context: { contextMap: input.Context.ContextMap } } : {}),
         }),
       );
       return {
@@ -343,6 +345,7 @@ export function buildBrokerAuthMiddleware(config: ReceivingServiceConfig): Reque
   const cedarLocal = createCedarLocal([]);
   const authorize = createAuthorize({
     mode: 'avp_api',
+    avpApi: 'entity',
     policyStoreId: config.policyStoreId,
     avpClient,
     cedarLocal,
@@ -354,7 +357,8 @@ export function buildBrokerAuthMiddleware(config: ReceivingServiceConfig): Reque
     verifyDPoP,
     authorize,
     expectedAudience: config.brokerAudience,
-    resourcePrefix: config.resourcePrefix,
     sourceDomain: 'receiving',
+    action: binding.action,
+    resourceGroup: binding.resourceGroup,
   });
 }

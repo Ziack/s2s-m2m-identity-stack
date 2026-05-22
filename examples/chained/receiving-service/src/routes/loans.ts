@@ -27,9 +27,11 @@ type AuthedRequest = Request & {
 
 export function loansRouter(config: ReceivingServiceConfig): Router {
   const router = Router();
-  const auth = buildBrokerAuthMiddleware(config);
+  const rg = `${config.resourcePrefix}-resources`;
+  const postAuth = buildBrokerAuthMiddleware(config, { action: 'POST_loan_application', resourceGroup: rg });
+  const getAuth = buildBrokerAuthMiddleware(config, { action: 'GET_loan_status', resourceGroup: rg });
 
-  router.post('/loans', auth, async (req: AuthedRequest, res: Response) => {
+  router.post('/loans', postAuth, async (req: AuthedRequest, res: Response) => {
     const principal = req.auth?.user?.sub ?? req.auth?.sub ?? req.auth?.principal ?? 'unknown';
     const loan: Loan = {
       loanId: `L-${randomUUID().slice(0, 8)}`,
@@ -92,6 +94,6 @@ export function loansRouter(config: ReceivingServiceConfig): Router {
     });
   });
 
-  router.get('/loans', auth, (_req: Request, res: Response) => res.status(200).json(store));
+  router.get('/loans', getAuth, (_req: Request, res: Response) => res.status(200).json(store));
   return router;
 }

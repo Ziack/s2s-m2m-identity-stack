@@ -9,6 +9,8 @@ export interface SignEnvelopeOptions {
   scopes: string[];
   clientId: string;
   correlationId?: string;
+  /** Forwarded end-user identity for the async authorization path. */
+  user?: { sub: string; roles: string[]; groups: string[] };
   additionalClaims?: Record<string, unknown>;
 }
 
@@ -26,7 +28,7 @@ export async function signEnvelope(payload: Buffer | object, options: SignEnvelo
   const iat = Math.floor(Date.now() / 1000);
   const correlationId = options.correlationId ?? randomUUID();
   const claims: Record<string, unknown> = {
-    iss: `ServicePrincipal::${options.clientId}`,
+    iss: `M2M::ServicePrincipal::${options.clientId}`,
     iat,
     jti,
     body_hash: bodyHash,
@@ -34,6 +36,7 @@ export async function signEnvelope(payload: Buffer | object, options: SignEnvelo
     queue_arn: options.queueArn,
     action: options.action,
     scopes: options.scopes,
+    ...(options.user ? { user: options.user } : {}),
     ...(options.additionalClaims ?? {}),
   };
   const envelope = await new SignJWT(claims)

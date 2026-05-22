@@ -73,6 +73,7 @@ export interface UserCtx {
 
 export function ctx(overrides: Partial<{
   dpop_confirmed: boolean;
+  envelope_verified: boolean;
   scopes: string[];
   source_domain: string;
   request_hour: number;

@@ -40,7 +40,7 @@ export function buildAuthMiddleware(config: LedgerServiceConfig): RequestHandler
 
   const avpRaw = new VerifiedPermissionsClient({ region: config.awsRegion });
   const avpClient = {
-    async isAuthorizedWithToken(input: Parameters<Parameters<typeof createAuthorize>[0]['avpClient']['isAuthorizedWithToken']>[0]) {
+    async isAuthorizedWithToken(input: Parameters<NonNullable<Parameters<typeof createAuthorize>[0]['avpClient']['isAuthorizedWithToken']>>[0]) {
       const resp = await avpRaw.send(new IsAuthorizedWithTokenCommand({
         policyStoreId: input.PolicyStoreId,
         accessToken: input.AccessToken,

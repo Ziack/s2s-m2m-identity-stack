@@ -35,21 +35,33 @@ const logger = pino({ level: 'silent' });
 describe('sqsConsumer.processOneBatch', () => {
   beforeEach(() => { receiveMock.mockReset(); deleteMock.mockReset(); verifyEnvelopeMock.mockReset(); authorizeMock.mockReset(); });
 
-  it('verifies envelope, authorizes, then deletes message', async () => {
+  it('verifies envelope, authorizes (schema-conformant), then deletes message', async () => {
     receiveMock.mockResolvedValue({
       Messages: [{ ReceiptHandle: 'rh-1', Body: JSON.stringify({ envelope: 'e1', payload: { x: 1 } }) }],
     });
-    verifyEnvelopeMock.mockResolvedValue({ principal: 'ServicePrincipal::lending', action: 'loan.decision.submit', claims: { scopes: ['lending/write'] } });
+    verifyEnvelopeMock.mockResolvedValue({
+      principal: 'M2M::ServicePrincipal::calling-service',
+      action: 'POST_loan_application',
+      claims: { scopes: ['lending/write'], correlation_id: 'corr-1', user: { sub: 'user-alice', roles: ['loan-officer'], groups: [] } },
+    });
     authorizeMock.mockResolvedValue({ decision: 'ALLOW', reasons: ['p1'], evaluationTimeMs: 5 });
 
     const result = await processOneBatch(cfg, logger);
 
     expect(result.processed).toBe(1);
-    expect(verifyEnvelopeMock).toHaveBeenCalledWith(
-      { envelope: 'e1', payload: { x: 1 } },
-      { expectedQueueArn: cfg.queueArn },
-    );
-    expect(authorizeMock).toHaveBeenCalled();
+    expect(authorizeMock).toHaveBeenCalledWith(expect.objectContaining({
+      principal: 'M2M::ServicePrincipal::calling-service',
+      action: 'M2M::Action::POST_loan_application',
+      resource: 'M2M::ResourceGroup::lending-resources',
+      context: expect.objectContaining({
+        dpop_confirmed: false,
+        envelope_verified: true,
+        scopes: ['lending/write'],
+        source_domain: 'lending',
+        correlation_id: 'corr-1',
+        user: { sub: 'user-alice', roles: ['loan-officer'], groups: [] },
+      }),
+    }));
     expect(deleteMock).toHaveBeenCalled();
   });
 

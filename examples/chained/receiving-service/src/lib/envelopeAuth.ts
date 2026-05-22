@@ -6,7 +6,7 @@
  * Unit tests mock this module wholesale (no init call), so the lazy `verifyFn`
  * / `authorizeFn` shape preserves test compatibility.
  */
-import { VerifiedPermissionsClient, IsAuthorizedWithTokenCommand } from '@aws-sdk/client-verifiedpermissions';
+import { VerifiedPermissionsClient, IsAuthorizedCommand } from '@aws-sdk/client-verifiedpermissions';
 import {
   createVerifyEnvelope,
   createAuthorize,
@@ -38,16 +38,13 @@ export function initEnvelopeAuth(config: ReceivingServiceConfig): void {
 
   const avpRaw = new VerifiedPermissionsClient({ region: config.awsRegion });
   const avpClient = {
-    async isAuthorizedWithToken(input: Parameters<Parameters<typeof createAuthorize>[0]['avpClient']['isAuthorizedWithToken']>[0]) {
-      const resp = await avpRaw.send(new IsAuthorizedWithTokenCommand({
+    async isAuthorized(input: Parameters<NonNullable<Parameters<typeof createAuthorize>[0]['avpClient']['isAuthorized']>>[0]) {
+      const resp = await avpRaw.send(new IsAuthorizedCommand({
         policyStoreId: input.PolicyStoreId,
-        accessToken: input.AccessToken,
-        identityToken: input.IdentityToken,
+        principal: { entityType: input.Principal.EntityType, entityId: input.Principal.EntityId },
         action: { actionType: input.Action.ActionType, actionId: input.Action.ActionId },
         resource: { entityType: input.Resource.EntityType, entityId: input.Resource.EntityId },
-        ...(input.Context
-          ? { context: { contextMap: input.Context.ContextMap as Record<string, never> } }
-          : {}),
+        ...(input.Context ? { context: { contextMap: input.Context.ContextMap } } : {}),
       }));
       return {
         Decision: (resp.decision === 'ALLOW' ? 'ALLOW' : 'DENY') as 'ALLOW' | 'DENY',
@@ -57,14 +54,12 @@ export function initEnvelopeAuth(config: ReceivingServiceConfig): void {
   };
   const fn = createAuthorize({
     mode: 'avp_api',
+    avpApi: 'entity',
     policyStoreId: config.policyStoreId,
     avpClient,
     cedarLocal: createCedarLocal([]),
     fallbackToLocal: false,
   });
-  // Consumer path has no end-user token; pass empty-string to AVP. AVP accepts
-  // calls where only Cedar context attributes (scopes, dpop_confirmed) drive
-  // the decision via the resource policy.
   authorizeFn = (input) => fn({ ...input, token: input.token ?? '' });
 }
 
