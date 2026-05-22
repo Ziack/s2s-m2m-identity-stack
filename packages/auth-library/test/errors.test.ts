@@ -21,6 +21,7 @@ describe('errors', () => {
   it('wwwAuthenticateHeader emits DPoP scheme for DPoP-related codes', () => {
     expect(wwwAuthenticateHeader(ERROR_CODES.INVALID_DPOP_PROOF)).toMatch(/^DPoP /);
     expect(wwwAuthenticateHeader(ERROR_CODES.DPOP_NONCE_REUSE)).toMatch(/^DPoP /);
+    expect(wwwAuthenticateHeader(ERROR_CODES.DPOP_KEY_MISMATCH)).toMatch(/^DPoP /);
     expect(wwwAuthenticateHeader(ERROR_CODES.AUTHORIZATION_DENIED)).toMatch(/^Bearer /);
   });
 });

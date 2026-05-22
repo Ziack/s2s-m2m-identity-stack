@@ -7,6 +7,7 @@ export const ERROR_CODES = {
   DPOP_TOKEN_MISMATCH: 'dpop_token_mismatch',
   DPOP_PROOF_EXPIRED: 'dpop_proof_expired',
   DPOP_NONCE_REUSE: 'dpop_nonce_reuse',
+  DPOP_KEY_MISMATCH: 'dpop_key_mismatch',
   USE_DPOP_NONCE: 'use_dpop_nonce',
   AUTHORIZATION_DENIED: 'authorization_denied',
 } as const;
@@ -19,6 +20,7 @@ const DPOP_CODES = new Set<ErrorCode>([
   ERROR_CODES.DPOP_TOKEN_MISMATCH,
   ERROR_CODES.DPOP_PROOF_EXPIRED,
   ERROR_CODES.DPOP_NONCE_REUSE,
+  ERROR_CODES.DPOP_KEY_MISMATCH,
   ERROR_CODES.USE_DPOP_NONCE,
 ]);
 
