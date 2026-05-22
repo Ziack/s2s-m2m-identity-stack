@@ -38,6 +38,8 @@ function buildApp(doubles: Doubles) {
     expectedAudience: 'ledger',
     resourcePrefix: 'ledger',
     sourceDomain: 'ledger',
+    action: 'POST_ledger_entry',
+    resourceGroup: 'ledger-resources',
   });
   const app = express();
   app.use(express.json());
@@ -101,6 +103,31 @@ describe('ledger createBrokerAuthMiddleware', () => {
     const call = doubles.authorize.mock.calls[0]![0] as { context: Record<string, unknown> };
     expect(call.context.source_domain).toBe('ledger');
     expect(call.context.actor_chain).toEqual(['receiving-outbound']);
+  });
+
+  it('builds namespaced, schema-conformant AVP principal/action/resource', async () => {
+    doubles.validateToken.mockResolvedValue(
+      makeValidated({
+        sub: 'receiving-service',
+        raw: {
+          iss: 'http://broker',
+          sub: 'receiving-service',
+          act: { sub: 'calling-service' },
+        },
+      }),
+    );
+    await request(buildApp(doubles))
+      .post('/api/ledger/entries')
+      .set('authorization', 'DPoP tok')
+      .set('dpop', 'proof')
+      .send({});
+    expect(doubles.authorize).toHaveBeenCalledWith(
+      expect.objectContaining({
+        principal: 'M2M::ServicePrincipal::receiving-service',
+        action: 'M2M::Action::POST_ledger_entry',
+        resource: 'M2M::ResourceGroup::ledger-resources',
+      }),
+    );
   });
 
   it('rejects token signed by wrong issuer → 401', async () => {

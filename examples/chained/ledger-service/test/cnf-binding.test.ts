@@ -91,6 +91,8 @@ function buildApp(opts: { tokenCnfJkt: string | undefined }) {
     expectedAudience: 'ledger',
     resourcePrefix: 'ledger',
     sourceDomain: 'ledger',
+    action: 'POST_ledger_entry',
+    resourceGroup: 'ledger-resources',
   });
   const app = express();
   app.use(express.json());

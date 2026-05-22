@@ -31,9 +31,11 @@ type AuthedRequest = Request & {
 
 export function entriesRouter(config: LedgerServiceConfig): Router {
   const router = Router();
-  const auth = buildBrokerAuthMiddleware(config);
+  const rg = `${config.resourcePrefix}-resources`;
+  const postAuth = buildBrokerAuthMiddleware(config, { action: 'POST_ledger_entry', resourceGroup: rg });
+  const getAuth = buildBrokerAuthMiddleware(config, { action: 'LIST_ledger_entries', resourceGroup: rg });
 
-  router.post('/ledger/entries', auth, (req: AuthedRequest, res: Response) => {
+  router.post('/ledger/entries', postAuth, (req: AuthedRequest, res: Response) => {
     const principal = req.auth?.user?.sub ?? req.auth?.sub ?? req.auth?.principal ?? 'unknown';
     const entry: LedgerEntry = {
       entryId: `E-${randomUUID().slice(0, 8)}`,
@@ -55,7 +57,7 @@ export function entriesRouter(config: LedgerServiceConfig): Router {
     });
   });
 
-  router.get('/ledger/entries', auth, (_req: Request, res: Response) => {
+  router.get('/ledger/entries', getAuth, (_req: Request, res: Response) => {
     res.status(200).json(store);
   });
 
