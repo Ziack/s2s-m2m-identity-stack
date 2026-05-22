@@ -8,19 +8,28 @@ import { createSigningKeyLoader } from '../src/lib/signingKeyLoader.js';
 import { loadActorCatalog, hashClientSecret } from '../src/lib/actorCatalog.js';
 import { createSubjectTokenValidator } from '../src/lib/subjectTokenValidator.js';
 import { createReplayStore } from '../src/lib/replayStore.js';
+import { createExchangeProofVerifier } from '../src/lib/exchangeProofVerifier.js';
 import { buildBrokerMetrics, resetBrokerMetricsForTest } from '../src/routes/metrics.js';
 import type { TokenBrokerConfig } from '../src/config.js';
 import {
   makeRsaKey,
+  makeDpopKey,
+  signDpopProof,
   signTestUserJwt,
   buildJwksFetcher,
   makeInMemoryRedis,
   type TestKeyMaterial,
+  type DPoPKeyMaterial,
 } from './helpers/testFixtures.js';
 
 const BROKER_ISSUER = 'https://broker.test/auth';
 const USER_ISSUER = 'https://calling-service/auth';
 const USER_AUDIENCE = 'calling-service';
+
+// Fixed Host used on every request so the broker reconstructs a stable
+// expected htu (matches what the test proofs sign).
+const BROKER_HOST = 'broker.test';
+const BROKER_HTU = `http://${BROKER_HOST}/oauth2/token`;
 
 function basicAuth(id: string, secret: string): string {
   return 'Basic ' + Buffer.from(`${id}:${secret}`, 'utf8').toString('base64');
@@ -94,21 +103,32 @@ async function buildApp(opts?: { brokerKey?: TestKeyMaterial; userKey?: TestKeyM
 
   const redis = makeInMemoryRedis();
   const replayStore = createReplayStore({ redis, ttlSeconds: 600 });
+  const proofVerifier = createExchangeProofVerifier({
+    redis: redis as unknown as Parameters<typeof createExchangeProofVerifier>[0]['redis'],
+  });
   const metrics = buildBrokerMetrics();
 
   const app = express();
+  app.set('trust proxy', true);
   app.use(express.urlencoded({ extended: false }));
   app.use(jwksRouter(signingKey));
-  app.use(tokenRouter({ config, catalog, signingKey, subjectValidator, replayStore, metrics }));
+  app.use(tokenRouter({ config, catalog, signingKey, subjectValidator, replayStore, proofVerifier, metrics }));
   return { app, brokerKey, userKey };
 }
 
 describe('POST /oauth2/token (RFC 8693 exchange)', () => {
   let ctx: AppContext;
   let userJwt: string;
+  let dpopKey: DPoPKeyMaterial;
+
+  /** A fresh, valid exchange proof (unique jti each call to avoid replay). */
+  async function freshProof(key?: DPoPKeyMaterial): Promise<string> {
+    return signDpopProof({ key: key ?? dpopKey, htu: BROKER_HTU });
+  }
 
   beforeAll(async () => {
     ctx = await buildApp();
+    dpopKey = await makeDpopKey();
     userJwt = await signTestUserJwt({
       privateKey: ctx.userKey.privateKey,
       kid: ctx.userKey.kid,
@@ -120,10 +140,12 @@ describe('POST /oauth2/token (RFC 8693 exchange)', () => {
     });
   });
 
-  it('happy path: mints an exchanged JWT with correct claims', async () => {
+  it('happy path: mints an exchanged JWT with correct claims and cnf.jkt', async () => {
     const res = await request(ctx.app)
       .post('/oauth2/token')
+      .set('Host', BROKER_HOST)
       .set('authorization', basicAuth('calling-service', 'calling-secret'))
+      .set('DPoP', await freshProof())
       .type('form')
       .send({
         grant_type: 'urn:ietf:params:oauth:grant-type:token-exchange',
@@ -147,6 +169,8 @@ describe('POST /oauth2/token (RFC 8693 exchange)', () => {
     expect(decoded.act).toEqual({ sub: 'calling-service' });
     expect(decoded.roles).toEqual(['admin']);
     expect(decoded.groups).toEqual(['eng']);
+    // cnf.jkt equals the exchange proof key's thumbprint (Phase-1 shape).
+    expect(decoded.cnf).toEqual({ jkt: dpopKey.thumbprint });
 
     // The issued JWT is signed by the broker key.
     const pubKey = await importJWK(ctx.brokerKey.publicJwk, 'RS256');
@@ -256,7 +280,9 @@ describe('POST /oauth2/token (RFC 8693 exchange)', () => {
   it('rejects audience not in actor allowed_audiences with invalid_target', async () => {
     const res = await request(ctx.app)
       .post('/oauth2/token')
+      .set('Host', BROKER_HOST)
       .set('authorization', basicAuth('calling-service', 'calling-secret'))
+      .set('DPoP', await freshProof())
       .type('form')
       .send({
         grant_type: 'urn:ietf:params:oauth:grant-type:token-exchange',
@@ -272,7 +298,9 @@ describe('POST /oauth2/token (RFC 8693 exchange)', () => {
   it('rejects scopes not in actor allowed_scopes with invalid_scope', async () => {
     const res = await request(ctx.app)
       .post('/oauth2/token')
+      .set('Host', BROKER_HOST)
       .set('authorization', basicAuth('calling-service', 'calling-secret'))
+      .set('DPoP', await freshProof())
       .type('form')
       .send({
         grant_type: 'urn:ietf:params:oauth:grant-type:token-exchange',
@@ -296,7 +324,9 @@ describe('POST /oauth2/token (RFC 8693 exchange)', () => {
     });
     const res = await request(ctx.app)
       .post('/oauth2/token')
+      .set('Host', BROKER_HOST)
       .set('authorization', basicAuth('calling-service', 'calling-secret'))
+      .set('DPoP', await freshProof())
       .type('form')
       .send({
         grant_type: 'urn:ietf:params:oauth:grant-type:token-exchange',
@@ -309,11 +339,14 @@ describe('POST /oauth2/token (RFC 8693 exchange)', () => {
     expect(res.body.error).toBe('invalid_token');
   });
 
-  it('handles re-entry: validates a broker-issued subject token, composes act chain', async () => {
-    // Phase 1: calling-service obtains a broker token for "receiving" aud
+  it('2-hop re-binding: cnf re-binds to each hop proof key; act still nests', async () => {
+    // Hop 1: calling-service exchanges the user token, signing with proof K1.
+    const k1 = await makeDpopKey();
     const phase1 = await request(ctx.app)
       .post('/oauth2/token')
+      .set('Host', BROKER_HOST)
       .set('authorization', basicAuth('calling-service', 'calling-secret'))
+      .set('DPoP', await signDpopProof({ key: k1, htu: BROKER_HTU }))
       .type('form')
       .send({
         grant_type: 'urn:ietf:params:oauth:grant-type:token-exchange',
@@ -324,11 +357,18 @@ describe('POST /oauth2/token (RFC 8693 exchange)', () => {
       });
     expect(phase1.status).toBe(200);
     const innerToken = phase1.body.access_token as string;
+    // Hop-1 token is bound to K1.
+    expect(decodeJwt(innerToken).cnf).toEqual({ jkt: k1.thumbprint });
 
-    // Phase 2: receiving-service-outbound presents that broker token to exchange for ledger
+    // Hop 2: receiving-service-outbound re-exchanges the inbound (cnf=K1) token,
+    // signing the NEW exchange request with its own proof K2. The new token must
+    // re-bind cnf to K2 (not K1), and act nests calling under receiving.
+    const k2 = await makeDpopKey();
     const phase2 = await request(ctx.app)
       .post('/oauth2/token')
+      .set('Host', BROKER_HOST)
       .set('authorization', basicAuth('receiving-service-outbound', 'recv-secret'))
+      .set('DPoP', await signDpopProof({ key: k2, htu: BROKER_HTU }))
       .type('form')
       .send({
         grant_type: 'urn:ietf:params:oauth:grant-type:token-exchange',
@@ -344,6 +384,75 @@ describe('POST /oauth2/token (RFC 8693 exchange)', () => {
     expect(decoded.act).toEqual({
       sub: 'receiving-service-outbound',
       act: { sub: 'calling-service' },
+    });
+    // cnf re-bound to THIS hop's key K2, not the inbound token's K1.
+    expect(decoded.cnf).toEqual({ jkt: k2.thumbprint });
+    expect(k2.thumbprint).not.toBe(k1.thumbprint);
+  });
+
+  describe('DPoP exchange-proof enforcement', () => {
+    function baseReq() {
+      return request(ctx.app)
+        .post('/oauth2/token')
+        .set('Host', BROKER_HOST)
+        .set('authorization', basicAuth('calling-service', 'calling-secret'))
+        .type('form');
+    }
+    const validBody = {
+      grant_type: 'urn:ietf:params:oauth:grant-type:token-exchange',
+      subject_token: '',
+      subject_token_type: 'urn:ietf:params:oauth:token-type:jwt',
+      audience: 'receiving',
+      scope: 'lending/write',
+    };
+
+    it('rejects a missing DPoP proof with invalid_dpop_proof', async () => {
+      const res = await baseReq().send({ ...validBody, subject_token: userJwt });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe('invalid_dpop_proof');
+    });
+
+    it('rejects a bad-signature proof', async () => {
+      const proof = await freshProof();
+      const parts = proof.split('.');
+      const tampered = `${parts[0]}.${parts[1]}.AAAA${parts[2]?.slice(4) ?? ''}`;
+      const res = await baseReq().set('DPoP', tampered).send({ ...validBody, subject_token: userJwt });
+      expect(res.status).toBe(401);
+      expect(res.body.error).toBe('invalid_dpop_proof');
+    });
+
+    it('rejects a wrong-htm proof', async () => {
+      const proof = await signDpopProof({ key: dpopKey, htm: 'GET', htu: BROKER_HTU });
+      const res = await baseReq().set('DPoP', proof).send({ ...validBody, subject_token: userJwt });
+      expect(res.status).toBe(401);
+      expect(res.body.error).toBe('invalid_dpop_proof');
+    });
+
+    it('rejects a wrong-htu proof', async () => {
+      const proof = await signDpopProof({ key: dpopKey, htu: 'http://evil.test/oauth2/token' });
+      const res = await baseReq().set('DPoP', proof).send({ ...validBody, subject_token: userJwt });
+      expect(res.status).toBe(401);
+      expect(res.body.error).toBe('invalid_dpop_proof');
+    });
+
+    it('rejects a stale-iat proof', async () => {
+      const staleIat = Math.floor(Date.now() / 1000) - 600;
+      const proof = await signDpopProof({ key: dpopKey, htu: BROKER_HTU, iat: staleIat });
+      const res = await baseReq().set('DPoP', proof).send({ ...validBody, subject_token: userJwt });
+      expect(res.status).toBe(401);
+      expect(res.body.error).toBe('invalid_dpop_proof');
+    });
+
+    it('rejects a replayed-jti proof', async () => {
+      const jti = 'fixed-jti-for-replay';
+      const proofA = await signDpopProof({ key: dpopKey, htu: BROKER_HTU, jti });
+      const first = await baseReq().set('DPoP', proofA).send({ ...validBody, subject_token: userJwt });
+      expect(first.status).toBe(200);
+      // Re-sign with the SAME jti (fresh iat) → replay rejection.
+      const proofB = await signDpopProof({ key: dpopKey, htu: BROKER_HTU, jti });
+      const second = await baseReq().set('DPoP', proofB).send({ ...validBody, subject_token: userJwt });
+      expect(second.status).toBe(401);
+      expect(second.body.error).toBe('invalid_dpop_proof');
     });
   });
 });

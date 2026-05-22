@@ -15,6 +15,14 @@ export interface MintExchangedTokenInput {
   scopes: string[];
   actorClientId: string;
   previousActorChain: ActorChain | null;
+  /**
+   * base64url SHA-256 JWK thumbprint of the CURRENT exchange request's DPoP
+   * proof key. Emitted as `cnf: { jkt }` (RFC 9449 §6 sender constraint). This
+   * always binds to the key on the present hop's proof — when a service
+   * re-exchanges an inbound cnf-bound token, the new token re-binds to the
+   * re-exchanging service's key, not the inbound token's cnf.
+   */
+  confirmationJkt: string;
   nowFn?: () => number;
 }
 
@@ -34,6 +42,8 @@ export async function mintExchangedToken(
     act,
     scope: input.scopes.join(' '),
     user_issuer: input.user.issuer,
+    // RFC 9449 §6 sender constraint, bound to this hop's proof key.
+    cnf: { jkt: input.confirmationJkt },
   };
   const signOpts: Parameters<typeof signUserJwt>[0] = {
     privateKey: opts.privateKey,
