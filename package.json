@@ -20,7 +20,7 @@
     "node": ">=20.0.0"
   },
   "scripts": {
-    "build": "npm -ws run build",
-    "test": "npm -ws run test"
+    "build": "npm -ws --if-present run build",
+    "test": "npm -ws --if-present run test"
   }
 }

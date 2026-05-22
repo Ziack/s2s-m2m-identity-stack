@@ -24,7 +24,7 @@ export async function postLedgerEntry(req: Request, payload: unknown): Promise<R
       accessToken: exchanged.accessToken,
       htm: 'POST',
       htu: url,
-      nonce,
+      ...(nonce ? { nonce } : {}),
     });
     return fetch(url, {
       method: 'POST',
