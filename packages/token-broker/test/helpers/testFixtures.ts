@@ -1,4 +1,4 @@
-import { generateKeyPair, exportPKCS8, exportJWK, calculateJwkThumbprint, SignJWT, type KeyLike, type JWK } from 'jose';
+import { generateKeyPair, exportPKCS8, exportJWK, calculateJwkThumbprint, SignJWT, importJWK, type KeyLike, type JWK } from 'jose';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -51,6 +51,44 @@ export async function signTestUserJwt(opts: {
     .setExpirationTime(now + (opts.ttlSeconds ?? 600))
     .setJti(randomUUID())
     .sign(opts.privateKey);
+}
+
+export interface DPoPKeyMaterial {
+  privateKey: KeyLike;
+  publicJwk: JWK;
+  thumbprint: string;
+}
+
+/** Generates an EC P-256 DPoP keypair (matches the SDK's keyManager). */
+export async function makeDpopKey(): Promise<DPoPKeyMaterial> {
+  const { publicKey, privateKey } = await generateKeyPair('ES256', { extractable: true });
+  const jwk = (await exportJWK(publicKey)) as JWK;
+  const publicJwk: JWK = { kty: 'EC', crv: 'P-256', x: jwk.x as string, y: jwk.y as string };
+  const thumbprint = await calculateJwkThumbprint(publicJwk, 'sha256');
+  return { privateKey, publicJwk, thumbprint };
+}
+
+/**
+ * Signs an exchange-request DPoP proof: typ=dpop+jwt, alg=ES256, embedded jwk,
+ * htm=POST, htu=<endpoint>, fresh iat/jti, and NO `ath` (no access token is
+ * presented on the exchange request).
+ */
+export async function signDpopProof(opts: {
+  key: DPoPKeyMaterial;
+  htm?: string;
+  htu: string;
+  iat?: number;
+  jti?: string;
+}): Promise<string> {
+  const iat = opts.iat ?? Math.floor(Date.now() / 1000);
+  return new SignJWT({ htm: opts.htm ?? 'POST', htu: opts.htu, jti: opts.jti ?? randomUUID() })
+    .setProtectedHeader({ typ: 'dpop+jwt', alg: 'ES256', jwk: opts.key.publicJwk })
+    .setIssuedAt(iat)
+    .sign(opts.key.privateKey);
+}
+
+export async function importDpopPublic(jwk: JWK): Promise<KeyLike> {
+  return (await importJWK(jwk, 'ES256')) as KeyLike;
 }
 
 export function sha256Hex(s: string): string {

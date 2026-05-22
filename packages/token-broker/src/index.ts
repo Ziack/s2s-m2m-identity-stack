@@ -7,6 +7,7 @@ import { createSigningKeyLoader } from './lib/signingKeyLoader.js';
 import { loadActorCatalogFromFile, loadActorCatalogFromSecretsManager } from './lib/actorCatalog.js';
 import { createSubjectTokenValidator } from './lib/subjectTokenValidator.js';
 import { createReplayStore } from './lib/replayStore.js';
+import { createExchangeProofVerifier } from './lib/exchangeProofVerifier.js';
 import { tokenRouter } from './routes/token.js';
 import { jwksRouter } from './routes/jwks.js';
 import { discoveryRouter } from './routes/discovery.js';
@@ -51,6 +52,9 @@ export async function buildApp(config: ReturnType<typeof loadConfig>): Promise<e
     redis: redis as unknown as Parameters<typeof createReplayStore>[0]['redis'],
     ttlSeconds: config.replayTtlSeconds,
   });
+  const proofVerifier = createExchangeProofVerifier({
+    redis: redis as unknown as Parameters<typeof createExchangeProofVerifier>[0]['redis'],
+  });
 
   const metrics = buildBrokerMetrics();
 
@@ -68,7 +72,7 @@ export async function buildApp(config: ReturnType<typeof loadConfig>): Promise<e
   app.use(discoveryRouter(config));
   app.use(jwksRouter(signingKey));
   app.use(metricsRouter(metrics));
-  app.use(tokenRouter({ config, catalog, signingKey, subjectValidator, replayStore, metrics }));
+  app.use(tokenRouter({ config, catalog, signingKey, subjectValidator, replayStore, proofVerifier, metrics }));
 
   return app;
 }

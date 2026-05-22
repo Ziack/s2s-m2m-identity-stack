@@ -5,6 +5,8 @@ import type { ActorCatalog } from '../lib/actorCatalog.js';
 import type { SigningKeyLoader } from '../lib/signingKeyLoader.js';
 import type { SubjectTokenValidator } from '../lib/subjectTokenValidator.js';
 import type { ReplayStore } from '../lib/replayStore.js';
+import type { ExchangeProofVerifier } from '../lib/exchangeProofVerifier.js';
+import { brokerTokenEndpointHtu } from '../lib/exchangeProofVerifier.js';
 import type { BrokerMetrics } from './metrics.js';
 import type { TokenBrokerConfig } from '../config.js';
 import { mintExchangedToken } from '../lib/tokenMinter.js';
@@ -16,6 +18,11 @@ export interface TokenRouterDeps {
   signingKey: SigningKeyLoader;
   subjectValidator: SubjectTokenValidator;
   replayStore: ReplayStore;
+  /**
+   * Verifies the DPoP proof on the exchange request (no `ath`) and yields the
+   * proof key thumbprint the minted token is bound to via `cnf.jkt`.
+   */
+  proofVerifier: ExchangeProofVerifier;
   metrics: BrokerMetrics;
 }
 
@@ -149,6 +156,41 @@ export function tokenRouter(deps: TokenRouterDeps): Router {
         return;
       }
 
+      // 2b. Verify the exchange-request DPoP proof (RFC 9449). The proof
+      // conveys + proves the caller's DPoP key; its thumbprint becomes the
+      // minted token's cnf.jkt (re-binds per hop). No `ath` — no access token
+      // is presented on the exchange request. Hard-enforced: the broker now
+      // REQUIRES a proof on every exchange.
+      const proofHeader = req.headers['dpop'];
+      const dpopProof = Array.isArray(proofHeader) ? proofHeader[0] : proofHeader;
+      if (!dpopProof) {
+        outcome = 'invalid_dpop_proof';
+        deps.metrics.exchangeOutcomeTotal.inc({ outcome, error_code: 'invalid_dpop_proof' });
+        endTimer({ outcome, reentry });
+        oauthError(res, 400, 'invalid_dpop_proof', 'DPoP proof header is required on the exchange request', requestId);
+        return;
+      }
+      let proofThumbprint: string;
+      try {
+        const expectedHtu = brokerTokenEndpointHtu(req);
+        const proofResult = await deps.proofVerifier.verify(dpopProof, expectedHtu);
+        proofThumbprint = proofResult.jwkThumbprint;
+      } catch (err) {
+        outcome = 'invalid_dpop_proof';
+        const code = err instanceof AuthError ? err.code : 'invalid_dpop_proof';
+        const status = err instanceof AuthError ? err.status : 401;
+        deps.metrics.exchangeOutcomeTotal.inc({ outcome, error_code: code });
+        endTimer({ outcome, reentry });
+        oauthError(
+          res,
+          status,
+          'invalid_dpop_proof',
+          err instanceof Error ? err.message : 'invalid DPoP proof',
+          requestId,
+        );
+        return;
+      }
+
       // 3. Validate subject token (auto-discriminate user vs broker)
       let validated;
       try {
@@ -203,6 +245,9 @@ export function tokenRouter(deps: TokenRouterDeps): Router {
           scopes: requestedScopes,
           actorClientId: basic.clientId,
           previousActorChain: validated.previousActorChain,
+          // cnf.jkt binds to THIS exchange request's proof key (re-binds per
+          // hop), NOT the inbound token's cnf.
+          confirmationJkt: proofThumbprint,
         },
       );
 
