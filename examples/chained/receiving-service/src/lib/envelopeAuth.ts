@@ -38,10 +38,6 @@ export function initEnvelopeAuth(config: ReceivingServiceConfig): void {
 
   const avpRaw = new VerifiedPermissionsClient({ region: config.awsRegion });
   const avpClient = {
-    // entity-mode only; the token API is never invoked on the async envelope path.
-    isAuthorizedWithToken(): never {
-      throw new Error('isAuthorizedWithToken not supported on the async envelope path (entity mode)');
-    },
     async isAuthorized(input: Parameters<NonNullable<Parameters<typeof createAuthorize>[0]['avpClient']['isAuthorized']>>[0]) {
       const resp = await avpRaw.send(new IsAuthorizedCommand({
         policyStoreId: input.PolicyStoreId,

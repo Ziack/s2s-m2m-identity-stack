@@ -6,7 +6,7 @@ import { getLogger } from '../observability/logger.js';
 import { toAvpContextMap, type AvpAttributeValue } from './avpContext.js';
 
 export interface AvpClientLike {
-  isAuthorizedWithToken(input: {
+  isAuthorizedWithToken?(input: {
     PolicyStoreId: string;
     IdentityToken?: string;
     AccessToken?: string;
@@ -98,7 +98,10 @@ export function createAuthorize(deps: AuthorizeDeps): AuthorizeFn {
             if (ctxMap) req.Context = { ContextMap: ctxMap };
             resp = await deps.avpClient.isAuthorized(req);
           } else {
-            const req: Parameters<typeof deps.avpClient.isAuthorizedWithToken>[0] = {
+            if (!deps.avpClient.isAuthorizedWithToken) {
+              throw new Error("avpApi:'token' requires an avpClient.isAuthorizedWithToken implementation");
+            }
+            const req: Parameters<NonNullable<typeof deps.avpClient.isAuthorizedWithToken>>[0] = {
               PolicyStoreId: deps.policyStoreId,
               AccessToken: input.token ?? '',
               Action: { ActionType: act.type, ActionId: act.id },

@@ -317,7 +317,7 @@ export function buildBrokerAuthMiddleware(config: ReceivingServiceConfig): Reque
   const avpRaw = new VerifiedPermissionsClient({ region: config.awsRegion });
   const avpClient = {
     async isAuthorizedWithToken(
-      input: Parameters<Parameters<typeof createAuthorize>[0]['avpClient']['isAuthorizedWithToken']>[0],
+      input: Parameters<NonNullable<Parameters<typeof createAuthorize>[0]['avpClient']['isAuthorizedWithToken']>>[0],
     ) {
       const resp = await avpRaw.send(
         new IsAuthorizedWithTokenCommand({
