@@ -14,13 +14,34 @@ export interface VerifyDPoPDeps {
   iatToleranceSeconds?: number;
   nonceStore?: NonceStore;
   requireNonce?: boolean;
+  /**
+   * Redis key prefix for the proof's jti replay record. Defaults to
+   * `dpop:jti:`. A distinct prefix (e.g. `dpop-exchange:`) lets a caller that
+   * verifies exchange-request proofs keep their jti keyspace separate from
+   * resource-request DPoP jtis so the two cannot collide.
+   */
+  jtiKeyPrefix?: string;
 }
 
 export interface VerifyDPoPInput {
   dpopProof: string;
-  accessToken: string;
+  /**
+   * Access token whose hash the proof's `ath` claim must equal. Required when
+   * `expectAth` is true (the default). Omit (or pass undefined) together with
+   * `expectAth: false` for an exchange-request proof, which presents no access
+   * token and legitimately carries no `ath`.
+   */
+  accessToken?: string;
   expectedHtm: string;
   expectedHtu: string;
+  /**
+   * Whether to require and verify the `ath` claim. Defaults to true. Set to
+   * false for a DPoP proof presented on the token-exchange request (RFC 9449
+   * §4.2 makes `ath` required only "when a DPoP proof is used in conjunction
+   * with an access token"); such proofs convey the caller's key and prove
+   * possession without binding to any access token.
+   */
+  expectAth?: boolean;
   /**
    * The `cnf.jkt` from the validated access token (RFC 9449 §6 sender
    * constraint). When provided, the proof's key thumbprint must equal it or
@@ -43,6 +64,7 @@ export function createVerifyDPoP(deps: VerifyDPoPDeps): VerifyDPoPFn {
   const nonceTtl = deps.nonceTtlSeconds ?? 120;
   const tolerance = deps.iatToleranceSeconds ?? 60;
   const requireNonce = deps.requireNonce === true;
+  const jtiPrefix = deps.jtiKeyPrefix ?? 'dpop:jti:';
 
   async function issueChallenge(): Promise<never> {
     const fresh = generateDPoPNonce();
@@ -96,11 +118,17 @@ export function createVerifyDPoP(deps: VerifyDPoPDeps): VerifyDPoPFn {
         metrics.authFailureTotal.inc({ step: 'verifyDPoP', error_code: ERROR_CODES.DPOP_PROOF_EXPIRED });
         throw new AuthError(401, ERROR_CODES.DPOP_PROOF_EXPIRED, `iat outside ±${tolerance}s`);
       }
-      const expectedAth = createHash('sha256').update(input.accessToken).digest('base64url');
-      if (payload.ath !== expectedAth) {
-        metrics.dpopVerifyDuration.observe({ result: 'fail' }, Number(process.hrtime.bigint() - start) / 1e9);
-        metrics.authFailureTotal.inc({ step: 'verifyDPoP', error_code: ERROR_CODES.DPOP_TOKEN_MISMATCH });
-        throw new AuthError(401, ERROR_CODES.DPOP_TOKEN_MISMATCH, 'ath claim does not match access token hash');
+      const expectAth = input.expectAth !== false;
+      if (expectAth) {
+        if (input.accessToken === undefined) {
+          throw new Error('verifyDPoP: accessToken is required when expectAth is not false');
+        }
+        const expectedAth = createHash('sha256').update(input.accessToken).digest('base64url');
+        if (payload.ath !== expectedAth) {
+          metrics.dpopVerifyDuration.observe({ result: 'fail' }, Number(process.hrtime.bigint() - start) / 1e9);
+          metrics.authFailureTotal.inc({ step: 'verifyDPoP', error_code: ERROR_CODES.DPOP_TOKEN_MISMATCH });
+          throw new AuthError(401, ERROR_CODES.DPOP_TOKEN_MISMATCH, 'ath claim does not match access token hash');
+        }
       }
       if (requireNonce) {
         if (!deps.nonceStore) throw new Error('verifyDPoP: requireNonce=true requires nonceStore dep');
@@ -119,7 +147,7 @@ export function createVerifyDPoP(deps: VerifyDPoPDeps): VerifyDPoPFn {
       if (!jti) {
         throw new AuthError(401, ERROR_CODES.INVALID_DPOP_PROOF, 'missing jti');
       }
-      const setRes = await deps.redis.set(`dpop:jti:${jti}`, '1', 'EX', nonceTtl, 'NX');
+      const setRes = await deps.redis.set(`${jtiPrefix}${jti}`, '1', 'EX', nonceTtl, 'NX');
       if (setRes !== 'OK') {
         metrics.nonceReplayTotal.inc({ client_id: 'unknown' });
         metrics.dpopVerifyDuration.observe({ result: 'fail' }, Number(process.hrtime.bigint() - start) / 1e9);

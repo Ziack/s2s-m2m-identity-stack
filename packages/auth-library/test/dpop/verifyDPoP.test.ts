@@ -108,6 +108,40 @@ describe('verifyDPoP', () => {
     ).rejects.toMatchObject({ code: 'dpop_key_mismatch' });
   });
 
+  it('verifies an exchange-request proof with no ath when expectAth=false', async () => {
+    // Exchange-request proof: no accessToken, so signDPoP emits no ath.
+    const { proof } = await signDPoP({ htm: 'POST', htu: 'https://broker/oauth2/token' });
+    const res = await verify({
+      dpopProof: proof,
+      expectedHtm: 'POST',
+      expectedHtu: 'https://broker/oauth2/token',
+      expectAth: false,
+    });
+    expect(res.ok).toBe(true);
+    expect(res.jwkThumbprint).toBeTruthy();
+  });
+
+  it('still verifies htm/htu/iat/jti when expectAth=false', async () => {
+    const { proof } = await signDPoP({ htm: 'POST', htu: 'https://broker/oauth2/token' });
+    await expect(
+      verify({ dpopProof: proof, expectedHtm: 'GET', expectedHtu: 'https://broker/oauth2/token', expectAth: false }),
+    ).rejects.toMatchObject({ code: 'dpop_binding_mismatch' });
+  });
+
+  it('rejects replayed jti under a custom jtiKeyPrefix (separate keyspace)', async () => {
+    const v = createVerifyDPoP({
+      redis: asRedis(redis),
+      nowFn: () => now,
+      nonceTtlSeconds: 120,
+      jtiKeyPrefix: 'dpop-exchange:',
+    });
+    const { proof } = await signDPoP({ htm: 'POST', htu: 'https://broker/oauth2/token' });
+    await v({ dpopProof: proof, expectedHtm: 'POST', expectedHtu: 'https://broker/oauth2/token', expectAth: false });
+    await expect(
+      v({ dpopProof: proof, expectedHtm: 'POST', expectedHtu: 'https://broker/oauth2/token', expectAth: false }),
+    ).rejects.toMatchObject({ code: 'dpop_nonce_reuse' });
+  });
+
   it('passes when requireCnfBinding=false (default) and no expectedJkt (back-compat)', async () => {
     const { proof } = await signDPoP({ accessToken: 'tok', htm: 'GET', htu: 'https://api/x' });
     const res = await verify({
