@@ -18,12 +18,22 @@ export async function processOneBatch(config: ReceivingServiceConfig, logger: Lo
         { envelope: parsed.envelope, payload: parsed.payload },
         { expectedQueueArn: config.queueArn },
       );
-      const claims = (verified as unknown as { claims?: { scopes?: string[]; jti?: string } }).claims ?? {};
+      const claims = (verified as unknown as {
+        claims?: { scopes?: string[]; jti?: string; correlation_id?: string; user?: { sub: string; roles: string[]; groups: string[] } };
+      }).claims ?? {};
+      const resourceGroup = `${config.resourcePrefix}-resources`;
+      const context: Record<string, unknown> = {
+        dpop_confirmed: false, // async path is envelope-sender-constrained, not DPoP
+        scopes: claims.scopes ?? [],
+        source_domain: config.resourcePrefix,
+        correlation_id: claims.correlation_id ?? msg.MessageId ?? 'unknown',
+        ...(claims.user ? { user: claims.user } : {}),
+      };
       const decision = await authorize({
         principal: verified.principal,
-        action: `Action::${(verified as unknown as { action?: string }).action ?? 'unknown'}`,
-        resource: `Resource::${config.resourcePrefix}::queue`,
-        context: { scopes: claims.scopes ?? [], dpop_confirmed: false, source_domain: config.resourcePrefix },
+        action: `M2M::Action::${(verified as unknown as { action?: string }).action ?? 'unknown'}`,
+        resource: `M2M::ResourceGroup::${resourceGroup}`,
+        context,
       });
       if (decision.decision === 'ALLOW') {
         logger.info({ jti: claims.jti, principal: verified.principal }, 'message processed');

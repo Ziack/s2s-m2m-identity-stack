@@ -39,7 +39,7 @@ export interface AuthorizeInput {
   principal: string;
   action: string;
   resource: string;
-  token: string;
+  token?: string;
   context?: Record<string, unknown>;
 }
 
@@ -100,7 +100,7 @@ export function createAuthorize(deps: AuthorizeDeps): AuthorizeFn {
           } else {
             const req: Parameters<typeof deps.avpClient.isAuthorizedWithToken>[0] = {
               PolicyStoreId: deps.policyStoreId,
-              AccessToken: input.token,
+              AccessToken: input.token ?? '',
               Action: { ActionType: act.type, ActionId: act.id },
               Resource: { EntityType: res.type, EntityId: res.id },
             };
