@@ -76,6 +76,8 @@ export interface BrokerAuthDeps {
     accessToken: string;
     expectedHtm: string;
     expectedHtu: string;
+    expectedJkt?: string | undefined;
+    requireCnfBinding?: boolean;
   }) => Promise<unknown>;
   authorize: (input: {
     principal: string;
@@ -144,11 +146,19 @@ export function createBrokerAuthMiddleware(deps: BrokerAuthDeps): RequestHandler
       }
       const host = req.get('host') ?? '';
       const htu = `${req.protocol}://${host}${req.originalUrl.split('?')[0]}`;
+      // RFC 9449 §6 hard-enforce: the resource-call proof key MUST match the
+      // token's cnf.jkt, and the token MUST carry one. validateToken ran above
+      // so cnf.jkt is available. A stolen token replayed with a different key
+      // (or a token without cnf.jkt) is rejected with dpop_key_mismatch (401).
+      // The nonce challenge inside verifyDPoP still fires first for
+      // first-contact callers, so the nonce-retry handshake is preserved.
       await deps.verifyDPoP({
         dpopProof: dpopHeader,
         accessToken,
         expectedHtm: req.method.toUpperCase(),
         expectedHtu: htu,
+        expectedJkt: validated.cnf?.jkt,
+        requireCnfBinding: true,
       });
 
       const claims = validated.raw;
