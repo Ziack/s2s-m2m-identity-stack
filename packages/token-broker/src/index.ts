@@ -60,6 +60,11 @@ export async function buildApp(config: ReturnType<typeof loadConfig>): Promise<e
 
   const app = express();
   app.disable('x-powered-by');
+  // Behind the ALB the broker terminates plain HTTP; honour X-Forwarded-Proto/
+  // -Host so req.protocol/req.host (and the reconstructed token-endpoint URL
+  // used as the expected DPoP `htu`) reflect the public https origin the SDK
+  // signed. v2.1.2 added this to the services + app-template but not the broker.
+  app.set('trust proxy', true);
   app.use(express.urlencoded({ extended: false, limit: '64kb' }));
   app.use(express.json({ limit: '64kb' }));
   app.use(pinoHttp({ logger }));
