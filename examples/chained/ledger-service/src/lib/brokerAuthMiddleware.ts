@@ -87,7 +87,6 @@ export interface BrokerAuthDeps {
     context?: Record<string, unknown>;
   }) => Promise<{ decision: 'ALLOW' | 'DENY'; reasons: string[] }>;
   expectedAudience: string;
-  resourcePrefix: string;
   sourceDomain: string;
   /** Cedar schema action ID for this route, e.g. "POST_ledger_entry". */
   action: string;
@@ -329,7 +328,6 @@ export function buildBrokerAuthMiddleware(
     verifyDPoP,
     authorize,
     expectedAudience: config.brokerAudience,
-    resourcePrefix: config.resourcePrefix,
     sourceDomain: 'ledger',
     action: binding.action,
     resourceGroup: binding.resourceGroup,

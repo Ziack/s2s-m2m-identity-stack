@@ -41,7 +41,6 @@ function buildApp(doubles: Doubles) {
     verifyDPoP: doubles.verifyDPoP as any,
     authorize: doubles.authorize as any,
     expectedAudience: 'receiving',
-    resourcePrefix: 'lending',
     sourceDomain: 'receiving',
     action: 'POST_loan_application',
     resourceGroup: 'lending-resources',

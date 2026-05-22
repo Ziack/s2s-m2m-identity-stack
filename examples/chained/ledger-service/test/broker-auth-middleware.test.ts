@@ -36,7 +36,6 @@ function buildApp(doubles: Doubles) {
     verifyDPoP: doubles.verifyDPoP as any,
     authorize: doubles.authorize as any,
     expectedAudience: 'ledger',
-    resourcePrefix: 'ledger',
     sourceDomain: 'ledger',
     action: 'POST_ledger_entry',
     resourceGroup: 'ledger-resources',

@@ -103,7 +103,6 @@ function buildApp(opts: { tokenCnfJkt: string | undefined }) {
     verifyDPoP: verifyDPoP as never,
     authorize: authorize as never,
     expectedAudience: 'receiving',
-    resourcePrefix: 'lending',
     sourceDomain: 'receiving',
     action: 'POST_loan_application',
     resourceGroup: 'lending-resources',
