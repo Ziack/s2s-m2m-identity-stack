@@ -17,6 +17,71 @@ A single version line covers every artifact in the repo (see §9.1 of the design
 
 (Nothing yet.)
 
+## [2.2.0] — 2026-05-21
+
+Implements a **true DPoP sender-constraint** via the `cnf.jkt` confirmation claim
+(RFC 9449 §5–6), **hard-enforced** end-to-end. Previously tokens advertised
+`token_type: DPoP` but were not bound to a holder key at issuance; now the broker
+welds each service token to the key the holder presents at exchange time, and
+receivers reject any token/proof key mismatch. This is a **minor** release
+(additive claim + new error code), but it requires a **coordinated deploy** —
+see the migration note below. Single-actor mode; no application-API changes for
+SDK callers.
+
+### Added
+
+- **True DPoP sender-constraint via `cnf.jkt`** (RFC 9449 §5–6). The caller signs
+  a DPoP proof over the `/oauth2/token` exchange request (`htm=POST`,
+  `htu=`broker token endpoint, **no** `ath`), and the broker mints the token with
+  `cnf: { jkt }` equal to that proof key's JWK thumbprint. Receivers compare the
+  request DPoP-proof key thumbprint against the token's `cnf.jkt`.
+- **`dpop_key_mismatch` error code** (HTTP `401`) — raised when a token lacks
+  `cnf.jkt` or the presented proof key does not match it.
+- **SDK surface:** `verifyDPoP` gained `expectedJkt` and `requireCnfBinding`;
+  `signDPoP` gained `expectAth` (optional `ath`, for the exchange proof which has
+  no access token yet); `validateToken` now exposes `cnf: { jkt }`.
+- **Broker** verifies the exchange-request DPoP proof (signature, `htm`, `htu`,
+  `iat`, `jti` replay in a separate `dpop-exchange:` keyspace, no `ath`) and mints
+  `cnf.jkt` bound to the **current** exchange proof's key, re-binding per hop.
+- **Receivers** enforce the binding via shared SDK middleware plus the receiving
+  and ledger middlewares; stolen-token rejection is unit-proven with real jose
+  keys.
+- Tests: auth-library 178, token-broker 36, calling 21, receiving 49, ledger 16.
+
+### Changed
+
+- **The broker now REQUIRES a DPoP proof on every `/oauth2/token` exchange** (was
+  none). Any non-SDK caller hitting `/oauth2/token` must now send a DPoP proof.
+- Shared receiver middleware `requireCnfBinding` **defaults to `true`**; services
+  scaffolded by `@s2s/create-service` inherit it. The cnf check only applies when
+  DPoP is enabled (`requireDPoP`).
+- `app.set('trust proxy', true)` on the broker so the exchange-proof `htu` is
+  computed as `https` behind the ALB / X-Forwarded-Proto.
+- **Type surface (minor):** under `exactOptionalPropertyTypes`, `verifyDPoP`'s
+  public `expectedJkt` widened to `string | undefined`.
+
+### Security
+
+- A leaked broker-issued token **can no longer be replayed without the holder's
+  DPoP private key.** This closes the gap where `token_type: DPoP` was advertised
+  but tokens were not actually bound to a key at issuance. Each hop's token is
+  bound to that hop's holder key (chain re-binding); the end-user leg stays a
+  plain bearer ID token.
+
+### Migration / coordinated deploy
+
+> **This is a hard-enforce change. Deploy the broker and ALL receivers together.**
+
+- Tokens are ~10-minute-lived. On a **fresh** deploy the rejection window is
+  effectively zero. On a **live in-place upgrade** there is a `<10`-minute window
+  during which pre-v2.2.0 tokens (no `cnf`) issued by the old broker are rejected
+  by upgraded receivers — drain or accept this short window.
+- **Any non-SDK caller** of `/oauth2/token` must now send a DPoP proof on the
+  exchange request, or the exchange fails.
+- **`dist/` must be rebuilt in CI/deploy** so the broker (which runs the compiled
+  SDK) picks up the `verifyDPoP`/`signDPoP`/`validateToken` changes. A stale
+  `dist/` will not enforce or mint `cnf.jkt`.
+
 ## [2.1.2] — 2026-05-21
 
 Five **correctness / production-hardening** fixes from an external security review, applied to the **shared SDK + Terraform modules + app-template** AND the two chained example services, so the next deploy and the next scaffolded service inherit them with no manual patching. These were the cause of `/demo/sync` stalling end-to-end. (Single-actor mode; no behavior change for callers.)

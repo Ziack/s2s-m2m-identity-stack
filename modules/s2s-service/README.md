@@ -102,6 +102,18 @@ this module creates zero Lattice resources regardless of `register_with_lattice`
 The `lattice_service_dns` / `lattice_service_arn` outputs are `null` when the
 service is not registered.
 
+## DPoP sender-constraint (cnf.jkt)
+
+As of **v2.2.0**, receivers **hard-enforce** the DPoP `cnf.jkt` sender-constraint
+(RFC 9449 §5–6). The broker mints each service token with `cnf: { jkt }` bound to
+the holder's exchange-proof key; the receiving SDK middleware requires the
+request's DPoP-proof key thumbprint to equal the token's `cnf.jkt` or returns
+`401 dpop_key_mismatch`. Services scaffolded by `@s2s/create-service` get
+`requireCnfBinding` defaulting to **true**. The cnf check only applies when DPoP
+is enabled (`requireDPoP`); with DPoP off it is inert. See
+[architecture.md](../../docs/architecture.md#dpop-sender-constraint-cnfjkt) for
+the full bind/re-bind flow.
+
 ## Example
 
 See `examples/basic/` in the repo root for the canonical SSM-assembly pattern.

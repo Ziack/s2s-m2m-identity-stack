@@ -118,6 +118,17 @@ curl -i "$ALB/api/loans"
 To call the service from another service, see `examples/chained/calling/` for
 the DPoP-bound RFC 8693 token-exchange flow.
 
+## DPoP sender-constraint (cnf.jkt)
+
+As of **v2.2.0**, receivers **hard-enforce** the DPoP `cnf.jkt` sender-constraint
+(RFC 9449 §5–6): the broker binds each service token to the holder's exchange-proof
+key, and the receiving middleware rejects any request whose DPoP-proof key
+thumbprint does not equal the token's `cnf.jkt` with `401 dpop_key_mismatch`.
+Scaffolded services get `requireCnfBinding` defaulting to **true**. The cnf check
+only applies when DPoP is enabled (`requireDPoP`); with DPoP off it is inert. See
+[architecture.md](./architecture.md#dpop-sender-constraint-cnfjkt) for the full
+bind/re-bind flow across the chain.
+
 ## Upgrade procedure
 
 ```bash
