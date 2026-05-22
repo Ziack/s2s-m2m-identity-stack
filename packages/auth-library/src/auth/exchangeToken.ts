@@ -1,4 +1,5 @@
 import { AuthError, ERROR_CODES } from '../errors.js';
+import { signDPoP } from '../dpop/signDPoP.js';
 
 /**
  * Options for the RFC 8693 token-exchange factory.
@@ -27,6 +28,19 @@ export interface ExchangeTokenOptions {
   scope: string[];
   /** Injectable fetch for tests. */
   fetchImpl?: typeof fetch;
+  /**
+   * Produces the DPoP proof attached as the `DPoP:` header on the exchange
+   * request. The proof conveys the caller's DPoP public key (embedded `jwk`)
+   * and proves possession; Phase 2 the broker verifies it and mints the access
+   * token with `cnf: { jkt }` equal to this key's thumbprint.
+   *
+   * Receives the broker token endpoint as `htu`; must sign with `htm: "POST"`.
+   * No `ath` is set (no access token is presented on the exchange request).
+   *
+   * Defaults to using the process DPoP key (`keyManager` via `signDPoP`).
+   * Injectable for tests. Returns the compact-JWS proof string.
+   */
+  dpopProofSigner?: (input: { htm: string; htu: string }) => Promise<string>;
 }
 
 export interface ExchangeTokenInput {
@@ -73,8 +87,14 @@ async function resolveSecret(secret: string | (() => Promise<string>)): Promise<
   return typeof secret === 'function' ? secret() : secret;
 }
 
+const defaultDpopProofSigner = async (input: { htm: string; htu: string }): Promise<string> => {
+  const { proof } = await signDPoP({ htm: input.htm, htu: input.htu });
+  return proof;
+};
+
 export function createExchangeToken(opts: ExchangeTokenOptions): ExchangeTokenFn {
   const fetchImpl = opts.fetchImpl ?? fetch;
+  const dpopProofSigner = opts.dpopProofSigner ?? defaultDpopProofSigner;
 
   return async function exchangeToken(input: ExchangeTokenInput): Promise<ExchangeTokenResult> {
     const audience = input.audience ?? opts.audience;
@@ -92,6 +112,11 @@ export function createExchangeToken(opts: ExchangeTokenOptions): ExchangeTokenFn
     const secret = await resolveSecret(opts.actorClientSecret);
     const basic = Buffer.from(`${opts.actorClientId}:${secret}`).toString('base64');
 
+    // DPoP proof conveys the caller's public key (so the broker can mint
+    // cnf:{jkt}) and proves key possession. Does not collide with the Basic
+    // actor credential — this is the control plane, no SigV4 here.
+    const dpopProof = await dpopProofSigner({ htm: 'POST', htu: opts.brokerUrl });
+
     let res: Response;
     try {
       res = await fetchImpl(opts.brokerUrl, {
@@ -100,6 +125,7 @@ export function createExchangeToken(opts: ExchangeTokenOptions): ExchangeTokenFn
           'content-type': 'application/x-www-form-urlencoded',
           accept: 'application/json',
           authorization: `Basic ${basic}`,
+          DPoP: dpopProof,
         },
         body: body.toString(),
       });

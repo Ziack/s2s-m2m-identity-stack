@@ -1,6 +1,8 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll } from 'vitest';
+import { decodeProtectedHeader, decodeJwt } from 'jose';
 import { createExchangeToken } from '../../src/auth/exchangeToken.js';
 import { AuthError } from '../../src/errors.js';
+import { initKeyPair, getPublicJwk, _resetKeyManagerForTest } from '../../src/dpop/keyManager.js';
 
 interface CapturedRequest {
   url: string;
@@ -36,6 +38,12 @@ function makeFetchStatus(status: number, body: Record<string, unknown>): typeof 
 }
 
 describe('exchangeToken', () => {
+  beforeAll(async () => {
+    // The default DPoP proof signer uses the process key from keyManager.
+    _resetKeyManagerForTest();
+    await initKeyPair();
+  });
+
   it('POSTs RFC 8693 form-encoded body with all required fields and Basic auth', async () => {
     const captured: CapturedRequest[] = [];
     const fetchImpl = makeFetchOk(
@@ -179,5 +187,60 @@ describe('exchangeToken', () => {
       fetchImpl,
     });
     await expect(exchange({ subjectToken: 'sub' })).rejects.toBeInstanceOf(AuthError);
+  });
+
+  it('attaches a DPoP proof header conveying the caller key (htm=POST, htu=token endpoint, ath omitted)', async () => {
+    const captured: CapturedRequest[] = [];
+    const fetchImpl = makeFetchOk({ access_token: 't', token_type: 'DPoP', expires_in: 60 }, captured);
+    const exchange = createExchangeToken({
+      brokerUrl: 'https://broker/oauth2/token',
+      actorClientId: 'svc',
+      actorClientSecret: 'x',
+      audience: 'a',
+      scope: [],
+      fetchImpl,
+    });
+    await exchange({ subjectToken: 'sub' });
+
+    const proof = captured[0]!.headers['dpop'];
+    expect(typeof proof).toBe('string');
+
+    const header = decodeProtectedHeader(proof!);
+    expect(header.typ).toBe('dpop+jwt');
+    expect(header.alg).toBe('ES256');
+    // The embedded jwk is the caller's process DPoP public key.
+    expect(header.jwk).toEqual(getPublicJwk());
+
+    const payload = decodeJwt(proof!);
+    expect(payload.htm).toBe('POST');
+    expect(payload.htu).toBe('https://broker/oauth2/token');
+    // No access token is presented on the exchange request → no ath claim.
+    expect(payload.ath).toBeUndefined();
+    expect(typeof payload.jti).toBe('string');
+
+    // Basic actor credential still present alongside the DPoP header.
+    const expectedBasic = 'Basic ' + Buffer.from('svc:x').toString('base64');
+    expect(captured[0]!.headers['authorization']).toBe(expectedBasic);
+  });
+
+  it('uses an injected dpopProofSigner when provided', async () => {
+    const captured: CapturedRequest[] = [];
+    const fetchImpl = makeFetchOk({ access_token: 't', token_type: 'DPoP', expires_in: 60 }, captured);
+    let seen: { htm: string; htu: string } | undefined;
+    const exchange = createExchangeToken({
+      brokerUrl: 'https://broker/oauth2/token',
+      actorClientId: 'svc',
+      actorClientSecret: 'x',
+      audience: 'a',
+      scope: [],
+      fetchImpl,
+      dpopProofSigner: async (input) => {
+        seen = input;
+        return 'injected-proof';
+      },
+    });
+    await exchange({ subjectToken: 'sub' });
+    expect(seen).toEqual({ htm: 'POST', htu: 'https://broker/oauth2/token' });
+    expect(captured[0]!.headers['dpop']).toBe('injected-proof');
   });
 });
