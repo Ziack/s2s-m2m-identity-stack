@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import express from 'express';
 import request from 'supertest';
+import { signEnvelope } from '@s2s/auth-library';
 import { asyncRouter } from '../src/routes/async.js';
 
 const sendMessageMock = vi.fn();
@@ -15,6 +16,8 @@ vi.mock('@s2s/auth-library', () => ({
     metadata: { jti: 'env-jti', iat: 1700000000, bodyHash: 'hash', envelopeSizeBytes: 512 },
   }),
 }));
+
+const signEnvelopeMock = vi.mocked(signEnvelope);
 
 const cfg = {
   port: 3000,
@@ -36,7 +39,10 @@ function buildApp() {
 }
 
 describe('POST /demo/async', () => {
-  beforeEach(() => sendMessageMock.mockReset());
+  beforeEach(() => {
+    sendMessageMock.mockReset();
+    signEnvelopeMock.mockClear();
+  });
 
   it('signs envelope and publishes envelope + payload to SQS', async () => {
     sendMessageMock.mockResolvedValue({ MessageId: 'mid-1' });
@@ -53,5 +59,26 @@ describe('POST /demo/async', () => {
     );
     const sent = JSON.parse(sendMessageMock.mock.calls[0][1] as string);
     expect(sent.payload).toEqual({ decisionId: 'D-1' });
+  });
+
+  it('signs an envelope with a schema action and the forwarded user', async () => {
+    sendMessageMock.mockResolvedValue({ MessageId: 'mid-2' });
+
+    const app = express();
+    app.use(express.json());
+    app.use((req, _res, next) => {
+      req.user = { sub: 'user-alice', roles: ['loan-officer'], groups: [] };
+      next();
+    });
+    app.use('/demo', asyncRouter(cfg));
+
+    const res = await request(app).post('/demo/async').send({ amount: 100 });
+
+    expect(res.status).toBe(202);
+    expect(signEnvelopeMock).toHaveBeenCalledTimes(1);
+    const [payload, options] = signEnvelopeMock.mock.calls[0];
+    expect(payload).toEqual({ amount: 100 });
+    expect(options.action).toBe('POST_loan_application');
+    expect(options.user).toEqual({ sub: 'user-alice', roles: ['loan-officer'], groups: [] });
   });
 });

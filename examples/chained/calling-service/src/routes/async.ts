@@ -7,11 +7,14 @@ export function asyncRouter(config: CallingServiceConfig): Router {
   const router = Router();
   router.post('/async', async (req: Request, res: Response) => {
     try {
+      const user = req.user;
       const signed = await signEnvelope(req.body, {
-        action: 'loan.decision.submit',
+        action: 'POST_loan_application',
         queueArn: config.queueArn,
         scopes: config.scopes,
         clientId: config.clientId,
+        ...(user ? { user: { sub: user.sub, roles: user.roles, groups: user.groups } } : {}),
+        ...(req.header('x-correlation-id') ? { correlationId: req.header('x-correlation-id') as string } : {}),
       });
       const messageBody = JSON.stringify({ envelope: signed.envelope, payload: signed.payload });
       const sent = await sendMessage(config.queueUrl, messageBody);
