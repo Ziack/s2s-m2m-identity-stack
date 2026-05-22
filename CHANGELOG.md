@@ -17,6 +17,75 @@ A single version line covers every artifact in the repo (see §9.1 of the design
 
 (Nothing yet.)
 
+## [2.3.0] — 2026-05-22
+
+Makes the Cedar/AVP authorization path **actually conformant with the policy
+store's STRICT validation**, on both the synchronous (broker-token, DPoP) and
+asynchronous (SQS/JWS-envelope) flows. Previously every `authorize()` call built
+AVP requests with un-namespaced entity types and action IDs derived from the HTTP
+method+path, so **no policy could match under STRICT** — and the async consumer
+called `IsAuthorizedWithToken` with an empty token (which always failed). This
+release fixes the request construction end-to-end, adds an entity-based
+authorization mode to the SDK for tokenless principals, and propagates the
+end-user identity through the async envelope so user-gated policies apply to
+queue-driven work. This is a **minor** release (additive SDK API + a new optional
+schema attribute); existing `dpop_confirmed` policies are unchanged.
+
+### Added
+
+- **Entity-based authorization mode in the SDK** (`createAuthorize({ avpApi:
+  'entity' })`): authorizes via AVP `IsAuthorized` with an explicit
+  `M2M::ServicePrincipal` entity and **no token** — the correct API for tokenless
+  M2M / async-envelope principals (the JWS envelope is the credential).
+- **`toAvpContextMap`** exported from `@s2s/auth-library`: encodes a Cedar context
+  into AVP's typed `AttributeValue` form (`{boolean}` / `{string}` / `{long}` /
+  `{set}` / `{record}`). AVP rejects raw JS values; encoding is now centralized in
+  the SDK rather than cast away in each caller.
+- **User propagation through the async envelope:** `signEnvelope({ user })` carries
+  the forwarded end-user identity (`sub`/`roles`/`groups`), which the receiver maps
+  into Cedar `context.user`. The calling-service `/demo/async` route now forwards
+  the authenticated user and signs a real schema action (`POST_loan_application`).
+- **`envelope_verified` context attribute** (optional `Bool` on `AuthContext`): a
+  second recognized sender-constraint mechanism alongside `dpop_confirmed`. The
+  global `common.cedar` gate now admits a request proven sender-constrained by
+  **either** a confirmed DPoP proof **or** a verified JWS envelope. The receiver
+  sets `envelope_verified: true` only **after** it verifies the envelope (a
+  policy-enforcement-point assertion, exactly parallel to `dpop_confirmed`).
+- New lending permit authorizing the async, envelope-verified, user-role-gated
+  `POST_loan_application` path (no `dpop_confirmed` requirement). The reader-only
+  `forbid` still applies as defense-in-depth.
+
+### Fixed
+
+- **STRICT-conformant AVP requests everywhere.** The sync broker middleware and the
+  async SQS consumer now emit `M2M::ServicePrincipal` / `M2M::Action::<schema
+  action>` / `M2M::ResourceGroup::<resourcePrefix>-resources` entity types and the
+  required `correlation_id` context attribute. Routes bind an explicit Cedar action
+  rather than deriving one from method+path (e.g. `POST /loans` →
+  `POST_loan_application`; `POST /ledger/entries` → `POST_ledger_entry`).
+- `splitAction` split on the **first** `::`, mangling `M2M::Action::X` into
+  `ActionType=M2M`; it now splits on the last `::` (matching `splitResource`).
+- The async consumer no longer calls `IsAuthorizedWithToken` with an empty token
+  (which always errored); it uses entity-based `IsAuthorized`.
+
+### Changed
+
+- `buildBrokerAuthMiddleware(config, { action, resourceGroup })` now requires a
+  per-route Cedar action + resource-group binding. (Both example services updated.)
+- `AvpClientLike` in `@s2s/auth-library` now declares both `isAuthorized?` and
+  `isAuthorizedWithToken?` as optional, with a per-branch guard in `createAuthorize`.
+- Convention: the AVP resource ID is `${resourcePrefix}-resources`.
+
+### Migration
+
+No coordinated deploy required. If you authored custom services that call
+`buildBrokerAuthMiddleware(config)`, add the `{ action, resourceGroup }` binding
+argument. Custom async producers that want user-gated authorization should call
+`signEnvelope({ ..., user })`; custom async consumers must set
+`envelope_verified: true` in the authorize context **after** verifying the
+envelope. Existing Cedar policies are unaffected (the new schema attribute is
+optional).
+
 ## [2.2.0] — 2026-05-21
 
 Implements a **true DPoP sender-constraint** via the `cnf.jkt` confirmation claim
