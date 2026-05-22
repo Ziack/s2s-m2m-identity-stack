@@ -55,6 +55,7 @@ describe('sqsConsumer.processOneBatch', () => {
       resource: 'M2M::ResourceGroup::lending-resources',
       context: expect.objectContaining({
         dpop_confirmed: false,
+        envelope_verified: true,
         scopes: ['lending/write'],
         source_domain: 'lending',
         correlation_id: 'corr-1',

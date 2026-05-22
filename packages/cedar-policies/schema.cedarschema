@@ -23,6 +23,10 @@ namespace M2M {
   // because both are optional and policies guard with `has`.
   type AuthContext = {
     dpop_confirmed: Bool,
+    // Set true by the receiver ONLY after it verifies a JWS message envelope.
+    // A second recognized sender-constraint mechanism alongside dpop_confirmed
+    // (used by the async/SQS path, which is envelope- not DPoP-bound).
+    envelope_verified?: Bool,
     scopes: Set<String>,
     source_domain: String,
     request_hour?: Long,

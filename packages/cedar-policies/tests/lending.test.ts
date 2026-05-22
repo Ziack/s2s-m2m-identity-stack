@@ -147,3 +147,26 @@ describe('lending POST_loan_application with user context (Phase 5)', () => {
     expect(r.decision).toBe('Deny');
   });
 });
+
+// Async (envelope-verified) path: forwarded user identity, no DPoP.
+describe('lending POST_loan_application async envelope path (no dpop_confirmed)', () => {
+  it('ALLOWS a forwarded loan-officer over the async envelope path', () => {
+    const r = authorize({
+      principal: CALLING,
+      action: 'M2M::Action::"POST_loan_application"',
+      resource: LENDING_RG,
+      context: ctx({ scopes: ['lending/write'], source_domain: 'lending', dpop_confirmed: false, envelope_verified: true, user: USER_ALICE }),
+    });
+    expect(r.decision).toBe('Allow');
+  });
+
+  it('DENIES a forwarded reader-only user over the async envelope path', () => {
+    const r = authorize({
+      principal: CALLING,
+      action: 'M2M::Action::"POST_loan_application"',
+      resource: LENDING_RG,
+      context: ctx({ scopes: ['lending/write'], source_domain: 'lending', dpop_confirmed: false, envelope_verified: true, user: USER_CAROL }),
+    });
+    expect(r.decision).toBe('Deny');
+  });
+});

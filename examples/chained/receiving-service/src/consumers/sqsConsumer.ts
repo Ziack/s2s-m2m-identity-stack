@@ -24,6 +24,7 @@ export async function processOneBatch(config: ReceivingServiceConfig, logger: Lo
       const resourceGroup = `${config.resourcePrefix}-resources`;
       const context: Record<string, unknown> = {
         dpop_confirmed: false, // async path is envelope-sender-constrained, not DPoP
+        envelope_verified: true, // set post-verifyEnvelope: a verified JWS envelope is the async sender-constraint proof
         scopes: claims.scopes ?? [],
         source_domain: config.resourcePrefix,
         correlation_id: claims.correlation_id ?? msg.MessageId ?? 'unknown',

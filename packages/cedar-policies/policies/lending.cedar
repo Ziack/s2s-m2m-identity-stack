@@ -39,6 +39,23 @@ permit (
    context.user.roles.contains("auditor"))
 };
 
+// Async / batch: an envelope-verified message (JWS sender-constraint verified
+// by the consumer *before* this authorization runs) that forwards the end-user
+// identity. Unlike the synchronous Phase-5 permit this does NOT require
+// `dpop_confirmed` — the async path is sender-constrained by the signed
+// envelope, not by DPoP. Authorization still requires a permitted user role,
+// so the reader-only `forbid` below continues to apply as defense-in-depth.
+permit (
+  principal == M2M::ServicePrincipal::"calling-service",
+  action == M2M::Action::"POST_loan_application",
+  resource in M2M::ResourceGroup::"lending-resources"
+) when {
+  context.scopes.contains("lending/write") &&
+  context has user &&
+  (context.user.roles.contains("loan-officer") ||
+   context.user.roles.contains("auditor"))
+};
+
 // Defense in depth: explicitly forbid POST_loan_application when the calling
 // user only has reader privileges (no loan-officer or auditor role).
 forbid (
