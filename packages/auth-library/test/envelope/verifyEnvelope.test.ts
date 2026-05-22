@@ -25,7 +25,7 @@ describe('verifyEnvelope', () => {
     const payload = { x: 1 };
     const signed = await signEnvelope(payload, { action: 'a', queueArn: 'q1', scopes: ['s'], clientId: 'svc' });
     const r = await verify({ envelope: signed.envelope, payload }, { expectedQueueArn: 'q1', queueType: 'sqs_standard' });
-    expect(r.principal).toBe('ServicePrincipal::svc');
+    expect(r.principal).toBe('M2M::ServicePrincipal::svc');
     expect(r.action).toBe('a');
   });
 

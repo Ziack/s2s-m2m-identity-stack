@@ -29,6 +29,8 @@ export type { SignUserJwtOptions, SignUserJwtInput } from './auth/signUserJwt.js
 export { extractActorChain } from './auth/extractActorChain.js';
 export { createAuthorize } from './authz/authorize.js';
 export { createCedarLocal } from './authz/cedarLocal.js';
+export { toAvpContextMap } from './authz/avpContext.js';
+export type { AvpAttributeValue } from './authz/avpContext.js';
 export { signEnvelope } from './envelope/signEnvelope.js';
 export { createVerifyEnvelope, DEFAULT_STALENESS } from './envelope/verifyEnvelope.js';
 export { createAuthMiddleware, createBrokerAuthMiddleware, type BrokerAuthMode } from './middleware.js';

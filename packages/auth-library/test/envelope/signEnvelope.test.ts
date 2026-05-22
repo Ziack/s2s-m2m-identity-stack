@@ -20,7 +20,7 @@ describe('signEnvelope', () => {
     });
     expect(typeof signed.envelope).toBe('string');
     const claims = decodeJwt(signed.envelope);
-    expect(claims.iss).toBe('ServicePrincipal::lending-svc');
+    expect(claims.iss).toBe('M2M::ServicePrincipal::lending-svc');
     expect(claims.action).toBe('loan.decision.submit');
     expect(claims.queue_arn).toBe('arn:aws:sqs:us-east-1:1:loanQ');
     expect(claims.scopes).toEqual(['lending/write']);
@@ -52,5 +52,30 @@ describe('signEnvelope', () => {
     const header = decodeProtectedHeader(signed.envelope);
     expect(header.alg).toBe('ES256');
     expect(header.jwk).toBeDefined();
+  });
+
+  it('emits a namespaced M2M::ServicePrincipal iss', async () => {
+    const signed = await signEnvelope({ x: 1 }, {
+      action: 'POST_loan_application', queueArn: 'arn:q', scopes: ['lending/write'], clientId: 'calling-service',
+    });
+    const claims = decodeJwt(signed.envelope);
+    expect(claims.iss).toBe('M2M::ServicePrincipal::calling-service');
+  });
+
+  it('includes the forwarded user claim when provided', async () => {
+    const signed = await signEnvelope({ x: 1 }, {
+      action: 'POST_loan_application', queueArn: 'arn:q', scopes: ['lending/write'], clientId: 'calling-service',
+      user: { sub: 'user-alice', roles: ['loan-officer'], groups: [] },
+    });
+    const claims = decodeJwt(signed.envelope) as Record<string, unknown>;
+    expect(claims.user).toEqual({ sub: 'user-alice', roles: ['loan-officer'], groups: [] });
+  });
+
+  it('omits the user claim when not provided', async () => {
+    const signed = await signEnvelope({ x: 1 }, {
+      action: 'POST_loan_application', queueArn: 'arn:q', scopes: ['lending/write'], clientId: 'calling-service',
+    });
+    const claims = decodeJwt(signed.envelope) as Record<string, unknown>;
+    expect('user' in claims).toBe(false);
   });
 });
