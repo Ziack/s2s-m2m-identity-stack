@@ -21,6 +21,19 @@ export interface VerifyDPoPInput {
   accessToken: string;
   expectedHtm: string;
   expectedHtu: string;
+  /**
+   * The `cnf.jkt` from the validated access token (RFC 9449 §6 sender
+   * constraint). When provided, the proof's key thumbprint must equal it or
+   * verification throws `dpop_key_mismatch`. Pass `validatedToken.cnf?.jkt`.
+   */
+  expectedJkt?: string;
+  /**
+   * Hard-enforce that the token carries a `cnf.jkt`. When true and
+   * `expectedJkt` is absent/empty, verification throws `dpop_key_mismatch`.
+   * Defaults to false (Phase 1 back-compat; Phase 3 flips example middlewares
+   * to pass true).
+   */
+  requireCnfBinding?: boolean;
 }
 
 export type VerifyDPoPFn = (input: VerifyDPoPInput) => Promise<DPoPVerificationResult>;
@@ -114,6 +127,17 @@ export function createVerifyDPoP(deps: VerifyDPoPDeps): VerifyDPoPFn {
         throw new AuthError(401, ERROR_CODES.DPOP_NONCE_REUSE, 'dpop jti replay');
       }
       const thumbprint = await calculateJwkThumbprint(jwk, 'sha256');
+      // RFC 9449 §6 sender-constraint: the proof key must match the token's cnf.jkt.
+      if (input.requireCnfBinding === true && (input.expectedJkt === undefined || input.expectedJkt === '')) {
+        metrics.dpopVerifyDuration.observe({ result: 'fail' }, Number(process.hrtime.bigint() - start) / 1e9);
+        metrics.authFailureTotal.inc({ step: 'verifyDPoP', error_code: ERROR_CODES.DPOP_KEY_MISMATCH });
+        throw new AuthError(401, ERROR_CODES.DPOP_KEY_MISMATCH, 'access token is not sender-constrained (missing cnf.jkt)');
+      }
+      if (input.expectedJkt !== undefined && input.expectedJkt !== '' && input.expectedJkt !== thumbprint) {
+        metrics.dpopVerifyDuration.observe({ result: 'fail' }, Number(process.hrtime.bigint() - start) / 1e9);
+        metrics.authFailureTotal.inc({ step: 'verifyDPoP', error_code: ERROR_CODES.DPOP_KEY_MISMATCH });
+        throw new AuthError(401, ERROR_CODES.DPOP_KEY_MISMATCH, 'dpop key thumbprint does not match token cnf.jkt');
+      }
       metrics.dpopVerifyDuration.observe({ result: 'ok' }, Number(process.hrtime.bigint() - start) / 1e9);
       return { ok: true, jti, jwkThumbprint: thumbprint, iat };
     });

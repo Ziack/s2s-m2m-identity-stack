@@ -63,6 +63,7 @@ export type {
   SignedMessage,
   VerifiedEnvelope,
   ValidatedToken,
+  CnfClaim,
   AuthorizationResult,
   AuthLibraryConfig,
   PublicJwk,

@@ -29,6 +29,34 @@ describe('validateToken', () => {
     expect(r.aud).toBe('res-x');
   });
 
+  it('exposes the cnf claim (RFC 9449 sender constraint) from a broker-style token', async () => {
+    const token = await makeToken({
+      sub: 'svc-a',
+      scope: 'a',
+      aud: 'res-x',
+      iss: 'https://issuer',
+      exp: 1_700_000_000 + 1000,
+      iat: 1_700_000_000,
+      cnf: { jkt: 'abc123-thumbprint' },
+    });
+    const r = await validate(token, { expectedAudience: 'res-x' });
+    expect(r.cnf).toEqual({ jkt: 'abc123-thumbprint' });
+    expect(r.cnf?.jkt).toBe('abc123-thumbprint');
+  });
+
+  it('leaves cnf undefined on a token without a confirmation claim', async () => {
+    const token = await makeToken({
+      sub: 'svc-a',
+      scope: 'a',
+      aud: 'res-x',
+      iss: 'https://issuer',
+      exp: 1_700_000_000 + 1000,
+      iat: 1_700_000_000,
+    });
+    const r = await validate(token, { expectedAudience: 'res-x' });
+    expect(r.cnf).toBeUndefined();
+  });
+
   it('rejects expired token', async () => {
     const token = await makeToken({ sub: 'c', scope: 'a', aud: 'r', iss: 'https://issuer', exp: 1_500_000_000, iat: 1_400_000_000 });
     await expect(validate(token, { expectedAudience: 'r' })).rejects.toMatchObject({ code: 'token_expired' });

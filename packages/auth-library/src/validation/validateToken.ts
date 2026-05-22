@@ -102,12 +102,18 @@ export function createValidateToken(deps: ValidateTokenDeps): ValidateTokenFn {
         throw new AuthError(401, ERROR_CODES.INVALID_TOKEN, 'issuer mismatch');
       }
       const scopeStr = String(payload.scope ?? '');
+      let cnf: { jkt?: string } | undefined;
+      if (payload.cnf !== null && typeof payload.cnf === 'object') {
+        const jkt = (payload.cnf as { jkt?: unknown }).jkt;
+        cnf = typeof jkt === 'string' ? { jkt } : {};
+      }
       return {
         sub: String(payload.sub ?? ''),
         scope: scopeStr.length > 0 ? scopeStr.split(' ') : [],
         iss,
         aud,
         exp,
+        ...(cnf !== undefined ? { cnf } : {}),
         raw: payload,
       };
     });

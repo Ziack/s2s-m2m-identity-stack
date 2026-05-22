@@ -38,12 +38,22 @@ export interface VerifiedEnvelope {
   verificationDurationMs: number;
 }
 
+/**
+ * RFC 9449 §6 confirmation claim binding a token to a DPoP key.
+ * `jkt` is the base64url-encoded SHA-256 JWK thumbprint of the key.
+ */
+export interface CnfClaim {
+  jkt?: string;
+}
+
 export interface ValidatedToken {
   sub: string;
   scope: string[];
   iss: string;
   aud: string;
   exp: number;
+  /** RFC 9449 confirmation claim (present when the broker sender-constrains the token). */
+  cnf?: CnfClaim;
   raw: Record<string, unknown>;
 }
 

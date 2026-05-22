@@ -64,4 +64,59 @@ describe('verifyDPoP', () => {
     await expect(verify({ dpopProof: tampered, accessToken: 'tok', expectedHtm: 'GET', expectedHtu: 'https://api/x' }))
       .rejects.toMatchObject({ code: 'invalid_dpop_proof' });
   });
+
+  it('accepts when expectedJkt matches the proof key thumbprint', async () => {
+    const { proof } = await signDPoP({ accessToken: 'tok', htm: 'GET', htu: 'https://api/x' });
+    // First verify without expectedJkt to learn the thumbprint, then verify a fresh proof against it.
+    const r1 = await verify({ dpopProof: proof, accessToken: 'tok', expectedHtm: 'GET', expectedHtu: 'https://api/x' });
+    const jkt = r1.jwkThumbprint;
+    const { proof: proof2 } = await signDPoP({ accessToken: 'tok', htm: 'GET', htu: 'https://api/x' });
+    const r2 = await verify({
+      dpopProof: proof2,
+      accessToken: 'tok',
+      expectedHtm: 'GET',
+      expectedHtu: 'https://api/x',
+      expectedJkt: jkt,
+    });
+    expect(r2.ok).toBe(true);
+    expect(r2.jwkThumbprint).toBe(jkt);
+  });
+
+  it('rejects with dpop_key_mismatch when expectedJkt does not match', async () => {
+    const { proof } = await signDPoP({ accessToken: 'tok', htm: 'GET', htu: 'https://api/x' });
+    await expect(
+      verify({
+        dpopProof: proof,
+        accessToken: 'tok',
+        expectedHtm: 'GET',
+        expectedHtu: 'https://api/x',
+        expectedJkt: 'not-the-right-thumbprint',
+      }),
+    ).rejects.toMatchObject({ code: 'dpop_key_mismatch' });
+  });
+
+  it('rejects with dpop_key_mismatch when requireCnfBinding=true and no expectedJkt', async () => {
+    const { proof } = await signDPoP({ accessToken: 'tok', htm: 'GET', htu: 'https://api/x' });
+    await expect(
+      verify({
+        dpopProof: proof,
+        accessToken: 'tok',
+        expectedHtm: 'GET',
+        expectedHtu: 'https://api/x',
+        requireCnfBinding: true,
+      }),
+    ).rejects.toMatchObject({ code: 'dpop_key_mismatch' });
+  });
+
+  it('passes when requireCnfBinding=false (default) and no expectedJkt (back-compat)', async () => {
+    const { proof } = await signDPoP({ accessToken: 'tok', htm: 'GET', htu: 'https://api/x' });
+    const res = await verify({
+      dpopProof: proof,
+      accessToken: 'tok',
+      expectedHtm: 'GET',
+      expectedHtu: 'https://api/x',
+      requireCnfBinding: false,
+    });
+    expect(res.ok).toBe(true);
+  });
 });
